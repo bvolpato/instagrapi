@@ -189,6 +189,9 @@ class HashtagMixin:
                     if max_amount and len(medias) >= max_amount:
                         break
                     media = extract_media_v1(node["media"])
+                    # Skip None results (extraction failed)
+                    if media is None:
+                        continue
                     # media_pk = node["media"]["id"]
                     # if media_pk in unique_set:
                     #     continue
@@ -293,6 +296,9 @@ class HashtagMixin:
                 if max_amount and len(medias) >= max_amount:
                     break
                 media = extract_media_v1(node["media"])
+                # Skip None results (extraction failed)
+                if media is None:
+                    continue
                 # check contains hashtag in caption
                 # if f"#{name}" not in media.caption_text:
                 #     continue

@@ -40,47 +40,56 @@ MEDIA_TYPES_GQL = {"GraphImage": 1, "GraphVideo": 2, "GraphSidecar": 8, "StoryVi
 
 
 def extract_media_v1(data):
-    """Extract media from Private API"""
-    media = deepcopy(data)
-    if "video_versions" in media:
-        # Select Best Quality by Resolutiuon
-        media["video_url"] = sorted(
-            media["video_versions"], key=lambda o: o["height"] * o["width"]
-        )[-1]["url"]
-    if media["media_type"] == 2 and not media.get("product_type"):
-        media["product_type"] = "feed"
-    if "image_versions2" in media:
-        media["thumbnail_url"] = sorted(
-            media["image_versions2"]["candidates"],
-            key=lambda o: o["height"] * o["width"],
-        )[-1]["url"]
-    if media["media_type"] == 8:
-        # remove thumbnail_url and video_url for albums
-        # see resources
-        media.pop("thumbnail_url", "")
-        media.pop("video_url", "")
-    location = media.get("location")
-    media["location"] = location and extract_location(location)
-    media["user"] = extract_user_short(media.get("user"))
-    media["usertags"] = sorted(
-        [
-            extract_usertag(usertag)
-            for usertag in media.get("usertags", {}).get("in", [])
-        ],
-        key=lambda tag: tag.user.pk,
-    )
-    media["like_count"] = media.get("like_count", 0)
-    media["has_liked"] = media.get("has_liked", False)
-    media["sponsor_tags"] = [tag["sponsor"] for tag in media.get("sponsor_tags") or []]
-    media["play_count"] = media.get("play_count", 0)
-    media["coauthor_producers"] = media.get("coauthor_producers", [])
-    return Media(
-        caption_text=(media.get("caption") or {}).get("text", ""),
-        resources=[
-            extract_resource_v1(edge) for edge in media.get("carousel_media", [])
-        ],
-        **media,
-    )
+    """Extract media from Private API
+    
+    Returns None if extraction fails (e.g., due to Pydantic validation errors).
+    This allows callers to skip invalid media items instead of crashing.
+    """
+    try:
+        media = deepcopy(data)
+        if "video_versions" in media:
+            # Select Best Quality by Resolutiuon
+            media["video_url"] = sorted(
+                media["video_versions"], key=lambda o: o["height"] * o["width"]
+            )[-1]["url"]
+        if media["media_type"] == 2 and not media.get("product_type"):
+            media["product_type"] = "feed"
+        if "image_versions2" in media:
+            media["thumbnail_url"] = sorted(
+                media["image_versions2"]["candidates"],
+                key=lambda o: o["height"] * o["width"],
+            )[-1]["url"]
+        if media["media_type"] == 8:
+            # remove thumbnail_url and video_url for albums
+            # see resources
+            media.pop("thumbnail_url", "")
+            media.pop("video_url", "")
+        location = media.get("location")
+        media["location"] = location and extract_location(location)
+        media["user"] = extract_user_short(media.get("user"))
+        media["usertags"] = sorted(
+            [
+                extract_usertag(usertag)
+                for usertag in media.get("usertags", {}).get("in", [])
+            ],
+            key=lambda tag: tag.user.pk,
+        )
+        media["like_count"] = media.get("like_count", 0)
+        media["has_liked"] = media.get("has_liked", False)
+        media["sponsor_tags"] = [tag["sponsor"] for tag in media.get("sponsor_tags") or []]
+        media["play_count"] = media.get("play_count", 0)
+        media["coauthor_producers"] = media.get("coauthor_producers", [])
+        return Media(
+            caption_text=(media.get("caption") or {}).get("text", ""),
+            resources=[
+                extract_resource_v1(edge) for edge in media.get("carousel_media", [])
+            ],
+            **media,
+        )
+    except Exception as e:
+        # Log error but return None to allow callers to skip invalid media
+        print(f"Error parsing media {data.get('pk', 'unknown')}: {e}")
+        return None
 
 
 def extract_media_v1_xma(data):
