@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 
 from instagrapi.exceptions import (
     ClientError,
+    ClientGraphqlError,
     ClientJSONDecodeError,
     ClientLoginRequired,
     ClientNotFoundError,
@@ -73,22 +74,33 @@ class UserMixin:
         UserShort
             An object of UserShort type
         """
-        if use_cache:
-            cache = self._userhorts_cache.get(user_id)
-            if cache:
-                return cache
-        variables = {
-            "user_id": str(user_id),
-            "include_reel": True,
-        }
-        data = self.public_graphql_request(
-            variables, query_hash="ad99dd9d3646cc3c0dda65debcd266a7"
+        # TODO: GraphQL query hash ad99dd9d3646cc3c0dda65debcd266a7 is INVALID/OUTDATED
+        # Instagram returns "Incorrect Query" error (code 1675002)
+        # Disabled to avoid sending invalid requests that trigger bot detection
+        # Use user_info_v1() or username_from_user_id() instead which have fallback logic
+        raise ClientGraphqlError(
+            "GraphQL query hash ad99dd9d3646cc3c0dda65debcd266a7 is invalid/outdated. "
+            "Use user_info_v1() or username_from_user_id() instead.",
+            response=None,
         )
-        if not data["user"]:
-            raise UserNotFound(user_id=user_id, **data)
-        user = extract_user_short(data["user"]["reel"]["user"])
-        self._userhorts_cache[user_id] = user
-        return user
+        
+        # COMMENTED OUT - Invalid query hash
+        # if use_cache:
+        #     cache = self._userhorts_cache.get(user_id)
+        #     if cache:
+        #         return cache
+        # variables = {
+        #     "user_id": str(user_id),
+        #     "include_reel": True,
+        # }
+        # data = self.public_graphql_request(
+        #     variables, query_hash="ad99dd9d3646cc3c0dda65debcd266a7"  # INVALID - TODO: Find valid query hash
+        # )
+        # if not data["user"]:
+        #     raise UserNotFound(user_id=user_id, **data)
+        # user = extract_user_short(data["user"]["reel"]["user"])
+        # self._userhorts_cache[user_id] = user
+        # return user
 
     def username_from_user_id_gql(self, user_id: str) -> str:
         """
@@ -107,7 +119,12 @@ class UserMixin:
         Example
         -------
         1903424587 -> 'example'
+        
+        Note: This method uses GraphQL which is currently disabled due to invalid query hash.
+        Use username_from_user_id() instead which has automatic fallback to private API.
         """
+        # TODO: user_short_gql() is disabled due to invalid query hash
+        # This will raise ClientGraphqlError which will be caught by username_from_user_id()
         return self.user_short_gql(user_id).username
 
     def username_from_user_id(self, user_id: str) -> str:
@@ -131,7 +148,9 @@ class UserMixin:
         user_id = str(user_id)
         try:
             username = self.username_from_user_id_gql(user_id)
-        except ClientError:
+        except (ClientError, ClientGraphqlError):
+            # GraphQL query failed (likely invalid/outdated query hash)
+            # Fall back to private API immediately to avoid sending invalid requests
             username = self.user_info_v1(user_id).username
         return username
 
@@ -254,9 +273,12 @@ class UserMixin:
         user_id = str(user_id)
         try:
             # GraphQL haven't method to receive user by id
-            return self.user_info_by_username_gql(
-                self.username_from_user_id_gql(user_id)
-            )
+            # Use username_from_user_id which has fallback to private API if GraphQL fails
+            username = self.username_from_user_id(user_id)
+            return self.user_info_by_username_gql(username)
+        except (ClientError, ClientGraphqlError) as e:
+            # If GraphQL fails, raise immediately to trigger fallback in user_info()
+            raise e
         except JSONDecodeError as e:
             raise ClientJSONDecodeError(e, user_id=user_id)
 
