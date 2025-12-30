@@ -278,7 +278,64 @@ class PublicRequestMixin:
                     response=body_json,
                 )
 
-            return body_json["data"]
+            # Try to access 'data' key, print full response if it's missing
+            try:
+                return body_json["data"]
+            except KeyError:
+                logger = logging.getLogger("instagrapi")
+                
+                error_info = {
+                    "error": "KeyError: 'data' - Response missing 'data' key",
+                    "response_keys": list(body_json.keys()),
+                    "full_response": body_json,
+                    "status": body_json.get("status"),
+                    "message": body_json.get("message"),
+                    "query_hash": query_hash,
+                    "query_id": query_id,
+                    "variables": variables,
+                }
+                
+                # Check if there are GraphQL errors in the response
+                graphql_errors = body_json.get("errors", [])
+                if graphql_errors:
+                    error_info["graphql_errors"] = graphql_errors
+                    error_message = graphql_errors[0].get("message", "Unknown GraphQL error")
+                    error_description = graphql_errors[0].get("description", "")
+                    error_summary = graphql_errors[0].get("summary", "")
+                    combined_message = f"{error_summary}: {error_description}" if error_description else error_message
+                else:
+                    combined_message = "GraphQL response missing 'data' key"
+                
+                # Also try to get response details from last_public_response
+                if hasattr(self, 'last_public_response') and self.last_public_response is not None:
+                    try:
+                        error_info["response_status"] = self.last_public_response.status_code
+                        error_info["response_url"] = str(self.last_public_response.url) if hasattr(self.last_public_response, 'url') else None
+                        error_info["response_headers"] = dict(self.last_public_response.headers)
+                        try:
+                            response_text = self.last_public_response.text
+                            error_info["response_text"] = response_text[:5000] if len(response_text) > 5000 else response_text
+                        except:
+                            pass
+                    except:
+                        pass
+                
+                error_msg = json.dumps(error_info, indent=2, default=str)
+                logger.error(f"GraphQL response missing 'data' key:\n{error_msg}")
+                print(f"\n{'='*80}")
+                print("ERROR: GraphQL response missing 'data' key")
+                print(f"{'='*80}")
+                print(error_msg)
+                print(f"{'='*80}\n")
+                
+                # Raise ClientGraphqlError instead of KeyError so it can be caught by fallback mechanisms
+                # This will allow user_info() to fall back to user_info_v1() automatically
+                # Pass the actual response object, not the dict
+                response_obj = self.last_public_response if hasattr(self, 'last_public_response') and self.last_public_response is not None else None
+                raise ClientGraphqlError(
+                    combined_message,
+                    response=response_obj,
+                )
 
         except ClientBadRequestError as e:
             message = None

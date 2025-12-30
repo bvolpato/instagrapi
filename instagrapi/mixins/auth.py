@@ -368,10 +368,9 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
             "sessionid": sessionid,
             "should_use_header_over_cookies": True,
         }
-        try:
-            user = self.user_info_v1(int(user_id))
-        except (PrivateError, ValidationError):
-            user = self.user_short_gql(int(user_id))
+        # TODO: user_short_gql() is disabled due to invalid query hash ad99dd9d3646cc3c0dda65debcd266a7
+        # Removed fallback to avoid sending invalid GraphQL requests
+        user = self.user_info_v1(int(user_id))
         self.username = user.username
         self.cookie_dict["ds_user_id"] = user.pk
         return True
