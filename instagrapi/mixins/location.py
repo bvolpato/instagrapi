@@ -1,17 +1,13 @@
 import base64
 import json
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 
-from instagrapi.exceptions import (
-    ClientNotFoundError,
-    LocationNotFound,
-    WrongCursorError,
-)
+from instagrapi.exceptions import LocationNotFound, WrongCursorError
 from instagrapi.extractors import extract_guide_v1, extract_location, extract_media_v1
 from instagrapi.types import Guide, Location, Media
 
-tab_keys_a1 = ("edge_location_to_top_posts", "edge_location_to_media")
 tab_keys_v1 = ("ranked", "recent")
+LocationTab = Literal["ranked", "recent"]
 
 
 class LocationMixin:
@@ -50,6 +46,49 @@ class LocationMixin:
             locations.append(extract_location(venue))
         return locations
 
+    def location_search_name(self, name: str) -> List[Location]:
+        """
+        Get locations using a location name.
+
+        Parameters
+        ----------
+        name: str
+            Name you want to search for
+
+        Returns
+        -------
+        List[Location]
+            List of objects of Location
+        """
+        result = self.top_search(name)
+        locations = []
+        for place in result.get("places", []):
+            location = extract_location(place)
+            if location:
+                locations.append(location)
+        return locations
+
+    def location_search_pk(self, location_pk: int) -> Location:
+        """
+        Resolve a location using its exact pk.
+
+        Parameters
+        ----------
+        location_pk: int
+            Unique identifier for a location
+
+        Returns
+        -------
+        Location
+            An object of Location
+        """
+        location_pk = str(location_pk)
+        info = self.location_info(location_pk)
+        for location in self.location_search_name(info.name):
+            if str(location.pk) == location_pk:
+                return location
+        return info
+
     def location_complete(self, location: Location) -> Location:
         """
         Smart complete of location
@@ -64,15 +103,17 @@ class LocationMixin:
         Location
             An object of Location
         """
-        assert location and isinstance(
-            location, Location
-        ), f'Location is wrong "{location}" ({type(location)})'
+        assert location and isinstance(location, Location), f'Location is wrong "{location}" ({type(location)})'
         if location.pk and not location.lat:
             # search lat and lng
             info = self.location_info(location.pk)
             location.lat = info.lat
             location.lng = info.lng
-        if not location.external_id and location.lat:
+        if location.pk and not location.external_id:
+            resolved = self.location_search_pk(location.pk)
+            location.external_id = resolved.external_id
+            location.external_id_source = resolved.external_id_source
+        elif not location.external_id and location.lat:
             # search extrernal_id and external_id_source
             try:
                 venue = self.location_search(location.lat, location.lng)[0]
@@ -82,9 +123,7 @@ class LocationMixin:
                 pass
         if not location.pk and location.external_id:
             info = self.location_info(location.external_id)
-            if info.name == location.name or (
-                info.lat == location.lat and info.lng == location.lng
-            ):
+            if info.name == location.name or (info.lat == location.lat and info.lng == location.lng):
                 location.pk = location.external_id
         return location
 
@@ -103,7 +142,9 @@ class LocationMixin:
         """
         if not location:
             return "{}"
-        if not location.external_id and location.lat:
+        if location.pk and not location.external_id:
+            location = self.location_search_pk(location.pk)
+        elif not location.external_id and location.lat:
             try:
                 location = self.location_search(location.lat, location.lng)[0]
             except IndexError:
@@ -118,27 +159,22 @@ class LocationMixin:
         }
         return json.dumps(data, separators=(",", ":"))
 
-    def location_info_a1(self, location_pk: int) -> Location:
+    def location_story_sticker_id(self, location: Location) -> str:
         """
-        Get a location using location pk
+        Build location id for story sticker tap models.
 
         Parameters
         ----------
-        location_pk: int
-            Unique identifier for a location
+        location: Location
+            An object of location
 
         Returns
         -------
-        Location
-            An object of Location
+        str
         """
-        try:
-            data = self.public_a1_request(f"/explore/locations/{location_pk}/") or {}
-            if not data.get("location"):
-                raise LocationNotFound(location_pk=location_pk, **data)
-            return extract_location(data["location"])
-        except ClientNotFoundError:
-            raise LocationNotFound(location_pk=location_pk)
+        if not location:
+            return ""
+        return str(location.external_id or location.pk or "")
 
     def location_info_v1(self, location_pk: int) -> Location:
         """
@@ -176,95 +212,11 @@ class LocationMixin:
         """
         return self.location_info_v1(location_pk)
 
-    def location_medias_a1_chunk(
-        self,
-        location_pk: int,
-        max_amount: int = 24,
-        sleep: float = 0.5,
-        tab_key: str = "",
-        max_id: str = None,
-    ) -> Tuple[List[Media], str]:
-        """
-        Get chunk of medias and end_cursor by Public Web API
-
-        Parameters
-        ----------
-        location_pk: int
-            Unique identifier for a location
-        max_amount: int, optional
-            Maximum number of media to return, default is 24
-        sleep: float, optional
-            Timeout between requests, default is 0.5
-        tab_key: str, optional
-            Tab Key, default value is ""
-        end_cursor: str, optional
-            End Cursor, default value is None
-
-        Returns
-        -------
-        Tuple[List[Media], str]
-            List of objects of Media and end_cursor
-        """
-        assert (
-            tab_key in tab_keys_a1
-        ), f'You must specify one of the options for "tab_key" {tab_keys_a1}'
-        unique_set = set()
-        medias = []
-        end_cursor = None
-        result = self.public_a1_request(
-            f"/explore/locations/{location_pk}/",
-            params={"max_id": end_cursor} if end_cursor else {},
-        )
-        data = result["location"]
-        page_info = data["edge_location_to_media"]["page_info"]
-        end_cursor = page_info["end_cursor"]
-        edges = data[tab_key]["edges"]
-        for edge in edges:
-            node = edge["node"]
-            # check uniq
-            media_pk = node["id"]
-            if media_pk in unique_set:
-                continue
-            unique_set.add(media_pk)
-            # Enrich media: Full user, usertags and video_url
-            medias.append(self.media_info_gql(media_pk))
-        return medias, end_cursor
-
-    def location_medias_a1(
-        self, location_pk: int, amount: int = 24, sleep: float = 0.5, tab_key: str = ""
-    ) -> List[Media]:
-        """
-        Get medias for a location
-
-        Parameters
-        ----------
-        location_pk: int
-            Unique identifier for a location
-        amount: int, optional
-            Maximum number of media to return, default is 24
-        sleep: float, optional
-            Timeout between requests, default is 0.5
-        tab_key: str, optional
-            Tab Key, default value is ""
-
-        Returns
-        -------
-        List[Media]
-            List of objects of Media
-        """
-        assert (
-            tab_key in tab_keys_a1
-        ), f'You must specify one of the options for "tab_key" {tab_keys_a1}'
-        medias, _ = self.location_medias_a1_chunk(location_pk, amount, sleep, tab_key)
-        if amount:
-            medias = medias[:amount]
-        return medias
-
     def location_medias_v1_chunk(
         self,
         location_pk: int,
         max_amount: int = 63,
-        tab_key: str = "",
+        tab_key: LocationTab = "ranked",
         max_id: str = None,
     ) -> Tuple[List[Media], str]:
         """
@@ -277,7 +229,7 @@ class LocationMixin:
         max_amount: int, optional
             Maximum number of media to return, default is 27
         tab_key: str, optional
-            Tab Key, default value is ""
+            Tab key: "ranked" or "recent", default is "ranked"
         max_id: str
             Max ID, default value is None
 
@@ -286,9 +238,7 @@ class LocationMixin:
         Tuple[List[Media], str]
             List of objects of Media and max_id
         """
-        assert (
-            tab_key in tab_keys_v1
-        ), f'You must specify one of the options for "tab_key" {tab_keys_v1}'
+        assert tab_key in tab_keys_v1, f'You must specify one of the options for "tab_key" {tab_keys_v1}'
         data = {
             "_uuid": self.uuid,
             "session_id": self.client_session_id,
@@ -308,13 +258,11 @@ class LocationMixin:
             data=data,
         )
         next_max_id = None
-        if result.get("next_page"):
+        if result.get("next_page") and result.get("next_max_id"):
             np = result.get("next_page")
             ids = result.get("next_media_ids")
             next_m_id = result.get("next_max_id")
-            next_max_id = base64.b64encode(
-                json.dumps([next_m_id, np, ids]).encode()
-            ).decode()
+            next_max_id = base64.b64encode(json.dumps([next_m_id, np, ids]).encode()).decode()
         for section in result.get("sections") or []:
             layout_content = section.get("layout_content") or {}
             nodes = layout_content.get("medias") or []
@@ -323,9 +271,7 @@ class LocationMixin:
                 medias.append(media)
         return medias, next_max_id
 
-    def location_medias_v1(
-        self, location_pk: int, amount: int = 63, tab_key: str = ""
-    ) -> List[Media]:
+    def location_medias_v1(self, location_pk: int, amount: int = 63, tab_key: LocationTab = "ranked") -> List[Media]:
         """
         Get medias for a location by Private Mobile API
 
@@ -336,44 +282,26 @@ class LocationMixin:
         amount: int, optional
             Maximum number of media to return, default is 63
         tab_key: str, optional
-            Tab Key, default value is ""
+            Tab key: "ranked" or "recent", default is "ranked"
 
         Returns
         -------
         List[Media]
             List of objects of Media
         """
-        assert (
-            tab_key in tab_keys_v1
-        ), f'You must specify one of the options for "tab_key" {tab_keys_a1}'
-        medias, _ = self.location_medias_v1_chunk(location_pk, amount, tab_key)
+        assert tab_key in tab_keys_v1, f'You must specify one of the options for "tab_key" {tab_keys_v1}'
+        medias = []
+        max_id = None
+        while True:
+            items, max_id = self.location_medias_v1_chunk(location_pk, amount, tab_key, max_id)
+            medias.extend(items)
+            if amount and len(medias) >= amount:
+                break
+            if not max_id:
+                break
         if amount:
             medias = medias[:amount]
         return medias
-
-    def location_medias_top_a1(
-        self, location_pk: int, amount: int = 9, sleep: float = 0.5
-    ) -> List[Media]:
-        """
-        Get top medias for a location
-
-        Parameters
-        ----------
-        location_pk: int
-            Unique identifier for a location
-        amount: int, optional
-            Maximum number of media to return, default is 9
-        sleep: float, optional
-            Timeout between requests, default is 0.5
-
-        Returns
-        -------
-        List[Media]
-            List of objects of Media
-        """
-        return self.location_medias_a1(
-            location_pk, amount, sleep=sleep, tab_key="edge_location_to_top_posts"
-        )
 
     def location_medias_top_v1(self, location_pk: int, amount: int = 21) -> List[Media]:
         """
@@ -393,9 +321,7 @@ class LocationMixin:
         """
         return self.location_medias_v1(location_pk, amount, tab_key="ranked")
 
-    def location_medias_top(
-        self, location_pk: int, amount: int = 27
-    ) -> List[Media]:
+    def location_medias_top(self, location_pk: int, amount: int = 27) -> List[Media]:
         """
         Get top medias for a location
 
@@ -413,33 +339,7 @@ class LocationMixin:
         """
         return self.location_medias_top_v1(location_pk, amount)
 
-    def location_medias_recent_a1(
-        self, location_pk: int, amount: int = 24, sleep: float = 0.5
-    ) -> List[Media]:
-        """
-        Get recent medias for a location
-
-        Parameters
-        ----------
-        location_pk: int
-            Unique identifier for a location
-        amount: int, optional
-            Maximum number of media to return, default is 24
-        sleep: float, optional
-            Timeout between requests, default is 0.5
-
-        Returns
-        -------
-        List[Media]
-            List of objects of Media
-        """
-        return self.location_medias_a1(
-            location_pk, amount, sleep=sleep, tab_key="edge_location_to_media"
-        )
-
-    def location_medias_recent_v1(
-        self, location_pk: int, amount: int = 63
-    ) -> List[Media]:
+    def location_medias_recent_v1(self, location_pk: int, amount: int = 63) -> List[Media]:
         """
         Get recent medias for a location
 
@@ -457,9 +357,7 @@ class LocationMixin:
         """
         return self.location_medias_v1(location_pk, amount, tab_key="recent")
 
-    def location_medias_recent(
-        self, location_pk: int, amount: int = 63
-    ) -> List[Media]:
+    def location_medias_recent(self, location_pk: int, amount: int = 63) -> List[Media]:
         """
         Get recent medias for a location
 

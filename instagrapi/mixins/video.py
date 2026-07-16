@@ -1,7 +1,10 @@
+import contextlib
 import random
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -11,10 +14,9 @@ from instagrapi import config
 from instagrapi.exceptions import (
     VideoConfigureError,
     VideoConfigureStoryError,
-    VideoNotDownload,
     VideoNotUpload,
 )
-from instagrapi.extractors import extract_direct_message, extract_media_v1
+from instagrapi.story import StoryBuilder
 from instagrapi.types import (
     DirectMessage,
     Location,
@@ -26,10 +28,15 @@ from instagrapi.types import (
     StoryMedia,
     StoryMention,
     StoryPoll,
+    StoryResizeMode,
     StorySticker,
+    Track,
     Usertag,
 )
-from instagrapi.utils import date_time_original, dumps
+from instagrapi.utils.serialization import dumps
+from instagrapi.utils.timing import date_time_original
+from instagrapi.utils.upload import with_coauthor_user_ids
+from instagrapi.utils.video import MOVIEPY_2_INSTALL_MESSAGE, analyze_video_for_upload
 
 
 class DownloadVideoMixin:
@@ -37,7 +44,7 @@ class DownloadVideoMixin:
     Helpers for downloading video
     """
 
-    def video_download(self, media_pk: int, folder: Path = "") -> Path:
+    def video_download(self, media_pk: int, folder: Path = "", overwrite: bool = True) -> Path:
         """
         Download video using media pk
 
@@ -47,21 +54,26 @@ class DownloadVideoMixin:
             Unique Media ID
         folder: Path, optional
             Directory in which you want to download the video, default is "" and will download the files to working dir.
+        overwrite: bool, optional
+            Whether to overwrite an existing file. When False and the target path already exists, skip download and
+                return the existing path.
 
         Returns
         -------
         Path
             Path for the file downloaded
         """
-        media = self.media_info(media_pk)
+        media = self.media_info_v1(media_pk)
         assert media.media_type == 2, "Must been video"
-        filename = "{username}_{media_pk}".format(
-            username=media.user.username, media_pk=media_pk
-        )
-        return self.video_download_by_url(media.video_url, filename, folder)
+        filename = "{username}_{media_pk}".format(username=media.user.username, media_pk=media_pk)
+        return self.video_download_by_url(media.video_url, filename, folder, overwrite=overwrite)
 
     def video_download_by_url(
-        self, url: str, filename: str = "", folder: Path = ""
+        self,
+        url: str,
+        filename: str = "",
+        folder: Path = "",
+        overwrite: bool = True,
     ) -> Path:
         """
         Download video using URL
@@ -75,6 +87,9 @@ class DownloadVideoMixin:
         folder: Path, optional
             Directory in which you want to download the video, default is "" and will download the files to working
                 directory
+        overwrite: bool, optional
+            Whether to overwrite an existing file. When False and the target path already exists, skip download and
+                return the existing path.
 
         Returns
         -------
@@ -85,31 +100,11 @@ class DownloadVideoMixin:
         fname = urlparse(url).path.rsplit("/", 1)[1]
         filename = "%s.%s" % (filename, fname.rsplit(".", 1)[1]) if filename else fname
         path = Path(folder) / filename
+        if path.exists() and not overwrite:
+            return path.resolve()
         response = requests.get(url, stream=True, timeout=self.request_timeout)
         response.raise_for_status()
-        try:
-            content_length = int(response.headers.get("Content-Length"))
-        except TypeError:
-            print(
-                """
-                The program detected an mis-formatted link, and hence can't download it.
-                This problem occurs when the URL is passed into
-                    'video_download_by_url()' or the 'clip_download_by_url()'.
-                The raw URL needs to be re-formatted into one that is recognizable by the methods.
-                Use this code: url=self.cl.media_info(self.cl.media_pk_from_url('insert the url here')).video_url
-                You can remove the 'self' from the code above if needed.
-                """
-            )
-            raise Exception("The program detected an mis-formatted link.")
-        file_length = len(response.content)
-        if content_length != file_length:
-            raise VideoNotDownload(
-                f'Broken file "{path}" (Content-length={content_length}, but file length={file_length})'
-            )
-        with open(path, "wb") as f:
-            f.write(response.content)
-            f.close()
-        return path.resolve()
+        return self._download_response_to_path(response, path)
 
     def video_download_by_url_origin(self, url: str) -> bytes:
         """
@@ -127,19 +122,223 @@ class DownloadVideoMixin:
         """
         response = requests.get(url, stream=True, timeout=self.request_timeout)
         response.raise_for_status()
-        content_length = int(response.headers.get("Content-Length"))
-        file_length = len(response.content)
-        if content_length != file_length:
-            raise VideoNotDownload(
-                f'Broken file from url "{url}" (Content-length={content_length}, but file length={file_length})'
-            )
-        return response.content
+        return self._download_response_bytes(response, url)
 
 
 class UploadVideoMixin:
     """
     Helpers for downloading video
     """
+
+    def _story_music_track_url(self, track: Union[Track, Dict]) -> str:
+        track_url = (
+            self._track_value(track, "uri")
+            or self._track_value(track, "progressive_download_url")
+            or self._track_value(track, "fast_start_progressive_download_url")
+            or self._track_value(track, "reactive_audio_download_url")
+        )
+        assert track_url, (
+            "track.uri, track.progressive_download_url, "
+            "track.fast_start_progressive_download_url or track.reactive_audio_download_url is required"
+        )
+        return str(track_url)
+
+    def _render_story_video_with_music(
+        self,
+        path: Path,
+        track: Union[Track, Dict],
+        output_path: Path,
+        audio_asset_start_time: int,
+        is_photo: bool = False,
+        duration: Optional[float] = None,
+        music_volume: float = 1.0,
+    ) -> float:
+        try:
+            import moviepy as mp
+        except ImportError as exc:
+            raise RuntimeError(f"story upload with music requires MoviePy 2.2.1. {MOVIEPY_2_INSTALL_MESSAGE}") from exc
+
+        media_clip = None
+        media_with_audio = None
+        audio_clip = None
+        audio_segment = None
+        tmpaudio = self.track_download_by_url(
+            self._story_music_track_url(track),
+            "track",
+            output_path.parent,
+        )
+        try:
+            if is_photo:
+                media_clip = mp.ImageClip(str(path)).with_duration(float(duration or 15.0))
+                if hasattr(media_clip, "with_fps"):
+                    media_clip = media_clip.with_fps(30)
+                else:
+                    media_clip.fps = 30
+            else:
+                media_clip = mp.VideoFileClip(str(path))
+            media_duration = float(media_clip.duration)
+            audio_clip = mp.AudioFileClip(str(tmpaudio))
+            start = audio_asset_start_time / 1000
+            audio_segment = audio_clip.subclipped(start, start + media_duration)
+            if music_volume != 1.0 and hasattr(audio_segment, "with_volume_scaled"):
+                audio_segment = audio_segment.with_volume_scaled(music_volume)
+            media_with_audio = media_clip.with_audio(audio_segment)
+            media_with_audio.write_videofile(str(output_path))
+            return media_duration
+        finally:
+            closed = set()
+            for clip in (media_with_audio, media_clip, audio_segment, audio_clip):
+                if not clip or id(clip) in closed:
+                    continue
+                closed.add(id(clip))
+                with contextlib.suppress(AttributeError):
+                    clip.close()
+
+    def story_music_extra_data(
+        self,
+        track: Union[Track, Dict],
+        extra_data: Dict[str, object] = {},
+        audio_asset_start_time: Optional[int] = None,
+        overlap_duration: int = 30000,
+        original_volume: float = 0.0,
+        music_volume: float = 1.0,
+        product: str = "story_camera_music_overlay_post_capture",
+        alacorn_session_id: str = "null",
+        audio_overlay_uuid: Optional[str] = None,
+    ) -> Dict[str, object]:
+        """
+        Build Story music metadata for story upload configure requests.
+
+        This helper only builds the Story metadata fields. Use
+        ``photo_upload_to_story_with_music`` or ``video_upload_to_story_with_music``
+        when the selected track also needs to be muxed into the uploaded media.
+        """
+        audio_asset_id = self._track_value(track, "audio_asset_id") or self._track_value(track, "id")
+        audio_cluster_id = self._track_value(track, "audio_cluster_id")
+        assert audio_asset_id, "track.audio_asset_id or track.id is required"
+        assert audio_cluster_id, "track.audio_cluster_id is required"
+        if audio_asset_start_time is None:
+            audio_asset_start_time = self._track_highlight_start(track)
+
+        audio_asset_id = str(audio_asset_id)
+        audio_cluster_id = str(audio_cluster_id)
+        artist_name = self._track_value(track, "display_artist") or ""
+        track_name = self._track_value(track, "title") or ""
+        audio_overlay_uuid = audio_overlay_uuid or str(uuid4())
+        data = dict(extra_data or {})
+        data["music_burnin_params"] = dumps(
+            {
+                "asset_fbid": audio_asset_id,
+                "offset_ms": int(audio_asset_start_time),
+            }
+        )
+        data["audio_muted"] = False
+        data["has_original_sound"] = "0" if original_volume == 0 else "1"
+        data["music_params"] = {
+            "audio_asset_id": audio_asset_id,
+            "audio_cluster_id": audio_cluster_id,
+            "audio_asset_start_time_in_ms": int(audio_asset_start_time),
+            "overlap_duration_in_ms": int(overlap_duration),
+            "product": product,
+            "song_name": track_name,
+            "artist_name": artist_name,
+            "alacorn_session_id": alacorn_session_id,
+        }
+        music_canonical_id = self._track_value(track, "music_canonical_id")
+        if music_canonical_id:
+            data["music_params"]["music_canonical_id"] = music_canonical_id
+        edits = dict(data.get("edits") or {})
+        edits["audio_state_edits"] = {
+            "has_music_sticker": True,
+            "is_music_burned_into_video": True,
+            "is_video_muted": False,
+            "did_user_mute_audio": False,
+            "force_play_video_audio": True,
+        }
+        media_audio_overlay_info = dict(edits.get("media_audio_overlay_info") or {})
+        media_audio_overlay_info.update(
+            {
+                "audio_mix_burned_in": True,
+                "video_volume": original_volume,
+                "media_audio_overlays": [
+                    {
+                        "audio_asset_id": audio_asset_id,
+                        "audio_overlay_uuid": audio_overlay_uuid,
+                        "audio_volume": music_volume,
+                        "seek_time_ms": int(audio_asset_start_time),
+                        "start_at_time_ms": 0,
+                        "audio_duration_ms": int(overlap_duration),
+                        "media_audio_overlay_type": "audio_track",
+                    }
+                ],
+            }
+        )
+        edits["media_audio_overlay_info"] = media_audio_overlay_info
+        data["edits"] = edits
+        return data
+
+    def _upload_story_with_music(
+        self,
+        path: Path,
+        caption: str,
+        track: Union[Track, Dict],
+        thumbnail: Path = None,
+        mentions: List[StoryMention] = [],
+        locations: List[StoryLocation] = [],
+        links: List[StoryLink] = [],
+        hashtags: List[StoryHashtag] = [],
+        stickers: List[StorySticker] = [],
+        medias: List[StoryMedia] = [],
+        polls: List[StoryPoll] = [],
+        extra_data: Dict[str, object] = {},
+        audio_asset_start_time: Optional[int] = None,
+        overlap_duration: Optional[int] = None,
+        original_volume: float = 0.0,
+        music_volume: float = 1.0,
+        product: str = "story_camera_music_overlay_post_capture",
+        alacorn_session_id: str = "null",
+        is_photo: bool = False,
+        duration: Optional[float] = None,
+    ) -> Story:
+        path = Path(path)
+        if thumbnail is not None:
+            thumbnail = Path(thumbnail)
+        if audio_asset_start_time is None:
+            audio_asset_start_time = self._track_highlight_start(track)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "story-with-music.mp4"
+            media_duration = self._render_story_video_with_music(
+                path,
+                track,
+                output_path,
+                audio_asset_start_time=audio_asset_start_time,
+                is_photo=is_photo,
+                duration=duration,
+                music_volume=music_volume,
+            )
+            music_extra = self.story_music_extra_data(
+                track,
+                extra_data=extra_data,
+                audio_asset_start_time=audio_asset_start_time,
+                overlap_duration=overlap_duration or int(media_duration * 1000),
+                original_volume=original_volume,
+                music_volume=music_volume,
+                product=product,
+                alacorn_session_id=alacorn_session_id,
+            )
+            return self.video_upload_to_story(
+                output_path,
+                caption,
+                thumbnail=thumbnail,
+                mentions=mentions,
+                locations=locations,
+                links=links,
+                hashtags=hashtags,
+                stickers=stickers,
+                medias=medias,
+                polls=polls,
+                extra_data=music_extra,
+            )
 
     def video_rupload(
         self,
@@ -172,9 +371,7 @@ class UploadVideoMixin:
         width, height, duration, thumbnail = analyze_video(path, thumbnail)
         waterfall_id = str(uuid4())
         # upload_name example: '1576102477530_0_7823256191'
-        upload_name = "{upload_id}_0_{rand}".format(
-            upload_id=upload_id, rand=random.randint(1000000000, 9999999999)
-        )
+        upload_name = "{upload_id}_0_{rand}".format(upload_id=upload_id, rand=random.randint(1000000000, 9999999999))
         rupload_params = {
             "retry_context": '{"num_step_auto_retry":0,"num_reupload":0,"num_step_manual_retry":0}',
             "media_type": "2",
@@ -207,9 +404,7 @@ class UploadVideoMixin:
         if to_album:
             headers = {"Segment-Start-Offset": "0", "Segment-Type": "3", **headers}
         response = self.private.get(
-            "https://{domain}/rupload_igvideo/{name}".format(
-                domain=config.API_DOMAIN, name=upload_name
-            ),
+            "https://{domain}/rupload_igvideo/{name}".format(domain=config.API_DOMAIN, name=upload_name),
             headers=headers,
         )
         self.request_log(response)
@@ -228,9 +423,7 @@ class UploadVideoMixin:
             **headers,
         }
         response = self.private.post(
-            "https://{domain}/rupload_igvideo/{name}".format(
-                domain=config.API_DOMAIN, name=upload_name
-            ),
+            "https://{domain}/rupload_igvideo/{name}".format(domain=config.API_DOMAIN, name=upload_name),
             data=video_data,
             headers=headers,
         )
@@ -247,6 +440,8 @@ class UploadVideoMixin:
         usertags: List[Usertag] = [],
         location: Location = None,
         extra_data: Dict[str, str] = {},
+        schedule_at: Optional[Union[int, datetime]] = None,
+        coauthor_user_ids: Optional[List[Union[int, str]]] = None,
     ) -> Media:
         """
         Upload video and configure to feed
@@ -265,6 +460,10 @@ class UploadVideoMixin:
             Location tag for this upload, default is None
         extra_data: Dict[str, str], optional
             Dict of extra data, if you need to add your params, like {"share_to_facebook": 1}.
+        schedule_at: int or datetime, optional
+            Unix timestamp in seconds or datetime when the video should be published.
+        coauthor_user_ids: List[int | str], optional
+            Instagram user IDs to invite as post coauthors.
 
         Returns
         -------
@@ -274,9 +473,9 @@ class UploadVideoMixin:
         path = Path(path)
         if thumbnail is not None:
             thumbnail = Path(thumbnail)
-        upload_id, width, height, duration, thumbnail = self.video_rupload(
-            path, thumbnail, to_story=False
-        )
+        extra_data = with_coauthor_user_ids(extra_data, coauthor_user_ids)
+        extra_data = self._scheduled_extra_data(extra_data, schedule_at)
+        upload_id, width, height, duration, thumbnail = self.video_rupload(path, thumbnail, to_story=False)
         for attempt in range(50):
             self.logger.debug(f"Attempt #{attempt} to configure Video: {path}")
             time.sleep(3)
@@ -303,14 +502,15 @@ class UploadVideoMixin:
                 raise e
             else:
                 if configured:
-                    media = configured.get("media")
                     self.expose()
-                    return extract_media_v1(media)
+                    return self._extract_configured_media_or_raise(
+                        configured,
+                        VideoConfigureError,
+                        "Video upload",
+                    )
         raise VideoConfigureError(response=self.last_response, **self.last_json)
 
-    def video_upload_to_cutout_sticker(
-        self, path: Path, bypass_ai: bool = True
-    ) -> Media:
+    def video_upload_to_cutout_sticker(self, path: Path, bypass_ai: bool = True) -> Media:
         """
         Upload video and create a Cutout Sticker.
 
@@ -382,10 +582,8 @@ class UploadVideoMixin:
         Dict
             A dictionary of response from the call
         """
-        self.photo_rupload(Path(thumbnail), upload_id)
-        usertags = [
-            {"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in usertags
-        ]
+        self.photo_rupload(Path(thumbnail), upload_id, for_story=True)
+        usertags = [{"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in usertags]
         data = {
             "multi_sharing": "1",
             "creation_logger_session_id": self.client_session_id,
@@ -405,9 +603,7 @@ class UploadVideoMixin:
             "caption": caption,
             **extra_data,
         }
-        return self.private_request(
-            "media/configure/?video=1", self.with_default_data(data)
-        )
+        return self.private_request("media/configure/?video=1", self.with_default_data(data))
 
     def video_upload_to_story(
         self,
@@ -422,6 +618,7 @@ class UploadVideoMixin:
         medias: List[StoryMedia] = [],
         polls: List[StoryPoll] = [],
         extra_data: Dict[str, str] = {},
+        resize_mode: StoryResizeMode = "fill",
     ) -> Story:
         """
         Upload video as a story and configure it
@@ -450,6 +647,8 @@ class UploadVideoMixin:
             List of polls to be included on this upload, default is empty list.
         extra_data: Dict[str, str], optional
             Dict of extra data, if you need to add your params, like {"share_to_facebook": 1}.
+        resize_mode: str, optional
+            Story resize mode: "fill" keeps current upload behavior, "fit" renders a Story canvas without cropping.
 
         Returns
         -------
@@ -459,52 +658,125 @@ class UploadVideoMixin:
         path = Path(path)
         if thumbnail is not None:
             thumbnail = Path(thumbnail)
-        upload_id, width, height, duration, thumbnail = self.video_rupload(
-            path, thumbnail, to_story=True
+        if resize_mode not in {"fill", "fit"}:
+            raise ValueError('resize_mode must be "fill" or "fit"')
+        rendered_story = None
+        upload_path = path
+        upload_thumbnail = thumbnail
+        try:
+            if resize_mode == "fit":
+                rendered_story = StoryBuilder(path).video_fit()
+                upload_path = Path(rendered_story.path)
+                upload_thumbnail = None
+            upload_id, width, height, duration, thumbnail = self.video_rupload(
+                upload_path,
+                upload_thumbnail,
+                to_story=True,
+            )
+            previous_story_ids = self._current_story_ids()
+            story_kwargs = {
+                "links": links,
+                "mentions": mentions,
+                "hashtags": hashtags,
+                "locations": locations,
+                "stickers": stickers,
+                "medias": medias,
+                "polls": polls,
+            }
+            for attempt in range(50):
+                self.logger.debug(f"Attempt #{attempt} to configure Video: {path}")
+                time.sleep(3)
+                try:
+                    configured = self.video_configure_to_story(
+                        upload_id,
+                        width,
+                        height,
+                        duration,
+                        thumbnail,
+                        caption,
+                        mentions,
+                        locations,
+                        links,
+                        hashtags,
+                        stickers,
+                        medias,
+                        polls,
+                        extra_data=extra_data,
+                    )
+                except Exception as e:
+                    if "Transcode not finished yet" in str(e):
+                        """
+                        Response 202 status:
+                        {"message": "Transcode not finished yet.", "status": "fail"}
+                        """
+                        time.sleep(10)
+                        continue
+                    raise e
+                if configured:
+                    self.expose()
+                    return self._extract_configured_story_or_recent(
+                        configured,
+                        VideoConfigureStoryError,
+                        "Video story upload",
+                        previous_story_ids,
+                        story_kwargs,
+                    )
+            raise VideoConfigureStoryError(response=self.last_response, **self.last_json)
+        finally:
+            if rendered_story:
+                for item in [rendered_story.path, *rendered_story.paths, f"{rendered_story.path}.jpg"]:
+                    with contextlib.suppress(OSError):
+                        Path(item).unlink()
+
+    def video_upload_to_story_with_music(
+        self,
+        path: Path,
+        caption: str,
+        track: Union[Track, Dict],
+        thumbnail: Path = None,
+        mentions: List[StoryMention] = [],
+        locations: List[StoryLocation] = [],
+        links: List[StoryLink] = [],
+        hashtags: List[StoryHashtag] = [],
+        stickers: List[StorySticker] = [],
+        medias: List[StoryMedia] = [],
+        polls: List[StoryPoll] = [],
+        extra_data: Dict[str, object] = {},
+        audio_asset_start_time: Optional[int] = None,
+        overlap_duration: Optional[int] = None,
+        original_volume: float = 0.0,
+        music_volume: float = 1.0,
+        product: str = "story_camera_music_overlay_post_capture",
+        alacorn_session_id: str = "null",
+    ) -> Story:
+        """
+        Upload video as a story with a selected music track.
+
+        The helper locally muxes the selected track into the uploaded video and
+        adds Story music metadata to the configure request. It replaces the
+        uploaded video's audio with the selected track.
+        """
+        return self._upload_story_with_music(
+            path,
+            caption,
+            track,
+            thumbnail=thumbnail,
+            mentions=mentions,
+            locations=locations,
+            links=links,
+            hashtags=hashtags,
+            stickers=stickers,
+            medias=medias,
+            polls=polls,
+            extra_data=extra_data,
+            audio_asset_start_time=audio_asset_start_time,
+            overlap_duration=overlap_duration,
+            original_volume=original_volume,
+            music_volume=music_volume,
+            product=product,
+            alacorn_session_id=alacorn_session_id,
+            is_photo=False,
         )
-        for attempt in range(50):
-            self.logger.debug(f"Attempt #{attempt} to configure Video: {path}")
-            time.sleep(3)
-            try:
-                configured = self.video_configure_to_story(
-                    upload_id,
-                    width,
-                    height,
-                    duration,
-                    thumbnail,
-                    caption,
-                    mentions,
-                    locations,
-                    links,
-                    hashtags,
-                    stickers,
-                    medias,
-                    polls,
-                    extra_data=extra_data,
-                )
-            except Exception as e:
-                if "Transcode not finished yet" in str(e):
-                    """
-                    Response 202 status:
-                    {"message": "Transcode not finished yet.", "status": "fail"}
-                    """
-                    time.sleep(10)
-                    continue
-                raise e
-            if configured:
-                media = configured.get("media")
-                self.expose()
-                return Story(
-                    links=links,
-                    mentions=mentions,
-                    hashtags=hashtags,
-                    locations=locations,
-                    stickers=stickers,
-                    medias=medias,
-                    polls=polls,
-                    **extract_media_v1(media).dict(),
-                )
-        raise VideoConfigureStoryError(response=self.last_response, **self.last_json)
 
     def video_configure_to_story(
         self,
@@ -644,9 +916,7 @@ class UploadVideoMixin:
             # "attempt_id": str(uuid4()),
             "device": self.device,
             "length": duration,
-            "clips": [
-                {"length": duration, "source_type": "3", "camera_position": "back"}
-            ],
+            "clips": [{"length": duration, "source_type": "3", "camera_position": "back"}],
             # "edits": {
             #     "filter_type": 0,
             #     "filter_strength": 1.0,
@@ -736,7 +1006,7 @@ class UploadVideoMixin:
                     "height": mention.height,
                     "rotation": 0.0,
                     "type": "location",
-                    "location_id": str(mention.location.pk),
+                    "location_id": self.location_story_sticker_id(mention.location),
                     "is_sticker": True,
                     "tap_state": 0,
                     "tap_state_str_id": "location_sticker_vibrant",
@@ -839,10 +1109,7 @@ class UploadVideoMixin:
                         "finished": poll.finished,
                         "color": poll.color,
                         "question": poll.question,
-                        "tallies": [
-                            {"count": 0, "font_size": 39.0, "text": o}
-                            for o in poll.options
-                        ],
+                        "tallies": [{"count": 0, "font_size": 39.0, "text": o} for o in poll.options],
                         **poll_extra,
                     }
                 )
@@ -873,10 +1140,8 @@ class UploadVideoMixin:
         if static_models:
             data["static_models"] = dumps(static_models)
         if story_sticker_ids:
-            data["story_sticker_ids"] = story_sticker_ids[0]
-        return self.private_request(
-            "media/configure_to_story/?video=1", self.with_default_data(data)
-        )
+            data["story_sticker_ids"] = ",".join(story_sticker_ids)
+        return self.private_request("media/configure_to_story/?video=1", self.with_default_data(data))
 
     def video_upload_to_direct(
         self,
@@ -914,9 +1179,7 @@ class UploadVideoMixin:
         path = Path(path)
         if thumbnail is not None:
             thumbnail = Path(thumbnail)
-        upload_id, width, height, duration, thumbnail = self.video_rupload(
-            path, thumbnail, to_story=True
-        )
+        upload_id, width, height, duration, thumbnail = self.video_rupload(path, thumbnail, to_story=True)
         for attempt in range(50):
             self.logger.debug(f"Attempt #{attempt} to configure Video: {path}")
             time.sleep(3)
@@ -943,7 +1206,11 @@ class UploadVideoMixin:
                     continue
                 raise e
             if configured and thread_ids:
-                return extract_direct_message(configured.get("message_metadata", [])[0])
+                return self._extract_configured_direct_message_or_raise(
+                    configured,
+                    VideoConfigureStoryError,
+                    "Video direct upload",
+                )
         raise VideoConfigureStoryError(response=self.last_response, **self.last_json)
 
 
@@ -964,24 +1231,5 @@ def analyze_video(path: Path, thumbnail: Path = None) -> tuple:
         (width, height, duration, thumbnail)
     """
 
-    try:
-        import moviepy.editor as mp
-    except ImportError:
-        try:
-            import moviepy as mp
-        except ImportError:
-            raise Exception("Please install moviepy>=1.0.3 and retry")
-
-    print(f'Analyzing video file "{path}"')
-    video = mp.VideoFileClip(str(path))
-    width, height = video.size
-    if not thumbnail:
-        thumbnail = f"{path}.jpg"
-        print(f'Generating thumbnail "{thumbnail}"...')
-        video.save_frame(thumbnail, t=(video.duration / 2))
-    # duration = round(video.duration + 0.001, 3)
-    try:
-        video.close()
-    except AttributeError:
-        pass
-    return width, height, video.duration, thumbnail
+    thumbnail, width, height, duration = analyze_video_for_upload(path, thumbnail, label="video")
+    return width, height, duration, thumbnail

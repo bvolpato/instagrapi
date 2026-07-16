@@ -1,37 +1,49 @@
 # instagrapi
 
-### We recommend using our services:
-
-* [LamaTok](https://lamatok.com/p/B9ScEYIQ) for TikTok API 🔥
-* [HikerAPI](https://hikerapi.com/p/bkXQlaVe) for Instagram API ⚡⚡⚡
-* [DataLikers](https://datalikers.com/p/S9Lv5vBy) for Instagram Datasets 🚀
+!!! warning "Telegram support group moved"
+    The previous `@instagrapi` Telegram group has been restricted by Meta and is no longer maintained.
+    New support group: [aiograpi_support](https://t.me/aiograpi_support) — same maintainer, covers both `instagrapi` and `aiograpi`.
 
 [![Package](https://github.com/subzeroid/instagrapi/actions/workflows/python-package.yml/badge.svg?branch=master)](https://github.com/subzeroid/instagrapi/actions/workflows/python-package.yml)
 [![PyPI](https://img.shields.io/pypi/v/instagrapi)][pypi]
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/instagrapi)][pypi]
 
-Fast and effective Instagram Private API wrapper (public+private requests and challenge resolver). Use the most recent version of the API from Instagram, which was obtained using [reverse-engineering with Charles Proxy](https://github.com/subzeroid/instagrapi/discussions/1182) and [Proxyman](https://proxyman.io/).
+Fast and effective unofficial Instagram API wrapper for Python.
 
-*Instagram API valid for **16 Dec 2023** (last reverse-engineering check)*
+`instagrapi` combines public web and private mobile API flows, supports session persistence and challenge handling, and covers users, media, stories, direct messages, notes, uploads, and insights.
 
-Support **Python >= 3.9**
+Support **Python 3.10+**
+
+`Python 3.9` support was dropped in `2.5.0` — pin to `instagrapi==2.4.5` if you need it.
 
 For any other languages (e.g. C++, C#, F#, D, [Golang](https://github.com/subzeroid/instagrapi-rest/tree/main/golang), Erlang, Elixir, Nim, Haskell, Lisp, Closure, Julia, R, Java, Kotlin, Scala, OCaml, JavaScript, Crystal, Ruby, Rust, [Swift](https://github.com/subzeroid/instagrapi-rest/tree/main/swift), Objective-C, Visual Basic, .NET, Pascal, Perl, Lua, PHP and others), I suggest using [instagrapi-rest](https://github.com/subzeroid/instagrapi-rest)
 
-[Support Chat in Telegram](https://t.me/instagrapi)
+For hosted production Instagram API infrastructure, see [HikerAPI](https://hikerapi.com/).
+
+Related services:
+
+* [Cloqly](https://cloqly.com/register?ref=58dbf70f) for premium rotating proxies and stable automation traffic
+* [DataLikers](https://datalikers.com/p/S9Lv5vBy) for Instagram MCP, Cache API, and datasets
+* [LamaTok](https://lamatok.com/p/B9ScEYIQ) for TikTok API access, automation, and data workflows
+* [InstaSurfBot](https://t.me/InstaSurfBot) for downloading Instagram media in Telegram
+* [OSINTagramBot](https://t.me/OSINTagramBot) for Instagram OSINT in Telegram
+
+Support chat in Telegram: [aiograpi_support](https://t.me/aiograpi_support)
 ![](https://gist.githubusercontent.com/m8rge/4c2b36369c9f936c02ee883ca8ec89f1/raw/c03fd44ee2b63d7a2a195ff44e9bb071e87b4a40/telegram-single-path-24px.svg) and [GitHub Discussions](https://github.com/subzeroid/instagrapi/discussions)
 
 ## Features
 
-1. Performs [Public API](https://subzeroid.github.io/instagrapi/usage-guide/fundamentals.html) (web, anonymous) or [Private API](https://subzeroid.github.io/instagrapi/usage-guide/fundamentals.html) (mobile app, authorized) requests depending on the situation (to avoid Instagram limits)
-2. [Login](https://subzeroid.github.io/instagrapi/usage-guide/interactions.html) by username and password, including 2FA and by sessionid
+1. Uses [Public API](https://subzeroid.github.io/instagrapi/usage-guide/fundamentals.html) (web, opportunistic) and [Private API](https://subzeroid.github.io/instagrapi/usage-guide/fundamentals.html) (mobile app, authorized) flows depending on the situation
+2. [Login](https://subzeroid.github.io/instagrapi/usage-guide/interactions.html) by username and password, including 2FA, [Bloks 2FA](usage-guide/totp.md#bloks-two-factor-flow) fallback/helpers, and by sessionid
 3. [Challenge Resolver](https://subzeroid.github.io/instagrapi/usage-guide/challenge_resolver.html) have Email and SMS handlers
 4. Support [upload](https://subzeroid.github.io/instagrapi/usage-guide/media.html) a Photo, Video, IGTV, Reels, Albums and Stories
 5. Support work with [User](https://subzeroid.github.io/instagrapi/usage-guide/user.html), [Media](https://subzeroid.github.io/instagrapi/usage-guide/media.html), [Comment](https://subzeroid.github.io/instagrapi/usage-guide/comment.html), [Insights](https://subzeroid.github.io/instagrapi/usage-guide/insight.html), [Collections](https://subzeroid.github.io/instagrapi/usage-guide/collection.html), [Location](https://subzeroid.github.io/instagrapi/usage-guide/location.html) (Place), [Hashtag](https://subzeroid.github.io/instagrapi/usage-guide/hashtag.html) and [Direct Message](https://subzeroid.github.io/instagrapi/usage-guide/direct.html) objects
 6. [Like](https://subzeroid.github.io/instagrapi/usage-guide/media.html), [Follow](https://subzeroid.github.io/instagrapi/usage-guide/user.html), [Edit account](https://subzeroid.github.io/instagrapi/usage-guide/account.html) (Bio) and much more else
 7. [Insights](https://subzeroid.github.io/instagrapi/usage-guide/insight.html) by account, posts and stories
-8. [Build stories](https://subzeroid.github.io/instagrapi/usage-guide/story.html) with custom background, font animation, swipe up link and mention users
-9. In the next release, account registration and captcha passing will appear
+8. [Build stories](https://subzeroid.github.io/instagrapi/usage-guide/story.html) with custom background, font animation, link stickers, and mentions
+9. App-side discovery: `chaining`, `fetch_suggestion_details`, `discover_recommended_accounts_for_category_v1`, `user_stream_*`, `user_web_profile_info_v1`
+10. v2 search SERPs ([Search](https://subzeroid.github.io/instagrapi/usage-guide/search.html)): `media_search`, `fbsearch_accounts_v2`, `fbsearch_reels_v2`, `fbsearch_topsearch_v2`, `fbsearch_typehead`
+11. Alternative media-info path `media_info_v2` for ad-tagged / sponsored media
 
 ## Example
 
@@ -73,10 +85,12 @@ cl.video_upload_to_story(
 
 ### Requests
 
-* `Public` (anonymous request via web api) methods have a suffix `_gql` (Instagram `GraphQL`) or `_a1` (example `https://www.instagram.com/example/?__a=1`)
+* `Public` web methods have a suffix `_gql` (Instagram `GraphQL`). Some `_gql` helpers use newer `doc_id` queries when Instagram disables legacy `query_hash` endpoints. Legacy `?__a=1` helpers were removed because that public web response is no longer reliable.
 * `Private` (authorized request via mobile api) methods have `_v1` suffix
 
-The first request to fetch media/user is `public` (anonymous), if instagram raise exception, then use `private` (authorized).
+Public web flows are not guaranteed. Instagram can change or block them independently of the library, and some helpers can only work reliably with an authenticated session.
+
+Many high-level helpers try a public/web path first and then fall back to a private/authenticated path when that makes sense for the current session.
 Example (pseudo-code):
 
 ``` python
@@ -95,12 +109,15 @@ To learn more about the various ways `instagrapi` can be used, read the [Usage G
 
 * [Getting Started](getting-started.md)
 * [Usage Guide](usage-guide/fundamentals.md)
+* [Runnable Examples](usage-guide/examples.md)
 * [Interactions](usage-guide/interactions.md)
+  * [Types](usage-guide/types.md) - Field reference for public `instagrapi.types` models
   * [`Media`](usage-guide/media.md) - Publication (also called post): Photo, Video, Album, IGTV and Reels
   * [`Resource`](usage-guide/media.md) - Part of Media (for albums)
   * [`MediaOembed`](usage-guide/media.md) - Short version of Media
+  * [`Notification`](usage-guide/notification.md) - Account notification settings
   * [`Account`](usage-guide/account.md) - Full private info for your account (e.g. email, phone_number)
-  * [`TOTP`](usage-guide/totp.md) - 2FA TOTP helpers (generate seed, enable/disable TOTP, generate code as Google Authenticator)
+  * [`TOTP`](usage-guide/totp.md) - 2FA TOTP helpers, code generation, and Bloks verification fallback/helpers
   * [`User`](usage-guide/user.md) - Full public user data
   * [`UserShort`](usage-guide/user.md) - Short public user data (used in Usertag, Comment, Media, Direct Message)
   * [`Usertag`](usage-guide/user.md) - Tag user in Media (coordinates + UserShort)
@@ -109,9 +126,14 @@ To learn more about the various ways `instagrapi` can be used, read the [Usage G
   * [`Collection`](usage-guide/collection.md) - Collection of medias (name, picture and list of medias)
   * [`Comment`](usage-guide/comment.md) - Comments to Media
   * [`Highlight`](usage-guide/highlight.md) - Highlights
-  * ['Notes'](usage-guide/notes.md) - Notes
+  * [`Notes`](usage-guide/notes.md) - Notes
+  * [`Realtime MQTT`](usage-guide/realtime.md) - Direct sync, lightweight Direct MQTT actions, and FBNS push callbacks
+  * [`Pydroid and ffmpeg`](usage-guide/pydroid.md) - Android/Pydroid video upload setup
+  * [`Termux`](usage-guide/termux.md) - Termux install notes and optional video helpers
+  * [`Public Transport`](usage-guide/public-transport.md) - Optional curl transport for public web requests
   * [`Story`](usage-guide/story.md) - Story
-  * [`StoryLink`](usage-guide/story.md) - Link (Swipe up)
+  * [`StoryArchiveDay`](usage-guide/story.md) - Story archive day shell
+  * [`StoryLink`](usage-guide/story.md) - Link sticker
   * [`StoryLocation`](usage-guide/story.md) - Tag Location in Story (as sticker)
   * [`StoryMention`](usage-guide/story.md) - Mention users in Story (user, coordinates and dimensions)
   * [`StoryHashtag`](usage-guide/story.md) - Hashtag for story (as sticker)
@@ -121,11 +143,14 @@ To learn more about the various ways `instagrapi` can be used, read the [Usage G
   * [`DirectMessage`](usage-guide/direct.md) - Message in Direct Message
   * [`Insight`](usage-guide/insight.md) - Insights for a post
   * [`Track`](usage-guide/track.md) - Music track (for Reels/Clips)
+* [Search](usage-guide/search.md) — v2 SERP endpoints (`media_search`, `fbsearch_accounts_v2`, `fbsearch_reels_v2`, `fbsearch_topsearch_v2`, `fbsearch_typehead`) and existing search helpers
 * [Best Practices](usage-guide/best-practices.md)
 * [Development Guide](development-guide.md)
 * [Handle Exceptions](usage-guide/handle_exception.md)
 * [Challenge Resolver](usage-guide/challenge_resolver.md)
 * [Exceptions](exceptions.md)
+
+If you are dealing with [`BadPassword` on a known-good password](https://instagrapi.com/guides/errors/bad-password/), `429`, `feedback_required`, `PleaseWaitFewMinutes`, or repeated relogins, start with [Best Practices](usage-guide/best-practices.md) and [Handle Exceptions](usage-guide/handle_exception.md).
 
 [ci]: https://github.com/subzeroid/instagrapi/actions
 [pypi]: https://pypi.org/project/instagrapi/

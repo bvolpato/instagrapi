@@ -21,47 +21,82 @@ In terms of Instagram, this is called Media, usually users call it publications 
 
 ## Viewing and editing publication
 
-| Method                                                          | Return             | Description
-| --------------------------------------------------------------- | ------------------ | --------------------------------------------
-| media_id(media_pk: int)                                         | str                | Return media_id by media_pk (e.g. 2277033926878261772 -> 2277033926878261772_1903424587)
-| media_pk(media_id: str)                                         | int                | Return media_pk by media_id (e.g. 2277033926878261772_1903424587 -> 2277033926878261772)
-| media_pk_from_code(code: str)                                   | int                | Return media_pk
-| media_pk_from_url(url: str)                                     | int                | Return media_pk
-| user_medias(user_id: str, amount: int = 20)                     | List\[Media]       | Get list of medias by user_id
-| user_medias_paginated(user_id: str, amount: int = 0, end_cursor: str = "")           | Tuple\[List\[Media], str] | Get one page of medias by user_id
-| user_clips(user_id: str, amount: int = 50)                      | List\[Media]       | Get list of clips (reels) by user_id
-| usertag_medias(user_id: str, amount: int = 20)                  | List\[Media]       | Get medias where a user is tagged
-| media_info(media_pk: int)                                       | Media              | Return media info
-| media_delete(media_pk: int)                                     | bool               | Delete media
-| media_edit(media_pk: int, caption: str, title: str, usertags: List[Usertag], location: Location) | dict | Change caption for media
-| media_user(media_pk: int)                                       | User | Get user info for media
-| media_oembed(url: str)                                          | MediaOembed        | Return short media info by media URL
-| media_like(media_id: str)                                       | bool               | Like media
-| media_unlike(media_id: str)                                     | bool               | Unlike media
-| media_seen(media_ids: List[str], skipped_media_ids: List[str])  | bool               | Mark a media as seen
-| media_likers(media_id: str)                                     | List\[UserShort]   | Return list of users who liked this post (due to Instagram limitations, this may not return a complete list)
-| media_archive(media_id: str)                                    | bool               | Archive a media
-| media_unarchive(media_id: str)                                  | bool               | Unarchive a media
-| media_pin(media_id: str)                                        | bool               | Pin a media to user profile
-| media_unpin(media_id: str)                                      | bool               | Unpin a media to user profile
+| Method | Return | Description |
+| --- | --- | --- |
+| media_id(media_pk: str) | str | Return full `media_id` by `media_pk` (e.g. `2277033926878261772 -> 2277033926878261772_1903424587`) |
+| media_pk(media_id: str) | str | Return `media_pk` by full `media_id` |
+| media_code_from_pk(media_pk: str) | str | Return shortcode for a media PK |
+| media_pk_from_code(code: str) | str | Return media PK from shortcode |
+| media_pk_from_url(url: str) | str | Return media PK from media URL; also handles `share/p/...` redirect URLs |
+| user_medias(user_id: str, amount: int = 0) | List\[Media] | Get user feed media |
+| iter_user_medias(user_id: str, amount: int = 0, page_size: int = 0) | Iterator\[Media] | Stream user feed media page by page without building a full list |
+| user_medias_paginated(user_id: str, amount: int = 0, end_cursor: str = "") | Tuple[List\[Media], str] | Get one page of user media and next cursor |
+| user_medias_chunk(user_id: str, end_cursor: str = "") | Tuple[List\[Media], str] | Compatibility alias for one page of user media |
+| user_clips(user_id: str, amount: int = 0) | List\[Media] | Get clips/reels by user |
+| usertag_medias(user_id: str, amount: int = 0) | List\[Media] | Get media where a user is tagged |
+| usertag_medias_paginated(user_id: str, amount: int = 0, end_cursor: str = "") | Tuple[List\[Media], str] | Get one page of media where a user is tagged and next cursor |
+| media_info(media_pk: str, use_cache: bool = True) | Media | Return media info |
+| media_delete(media_id: str) | bool | Delete media |
+| media_edit(media_id: str, caption: str, title: str = "", usertags: List[Usertag] = [], location: Location = None) | dict | Edit caption, optional IGTV title, usertags, or location |
+| media_link_reel(media_id: str, target_media_id: str, link_name: str = "Watch Next") | bool | Link one Reel to another Reel so Instagram can show a navigation button |
+| media_user(media_pk: str) | UserShort | Get author of media |
+| media_oembed(url: str) | dict | Return short oEmbed-style media info by URL |
+| media_like(media_id: str) | bool | Like media |
+| media_unlike(media_id: str) | bool | Unlike media |
+| media_share_to_story(media_id: str, background: Path = None, caption: str = "") | Story | Share an existing post to your story as a feed media sticker |
+| media_note_create(media_id: str, text: str = "", audience: int = 7, note_style: int = 13, extra_data: Optional[Dict] = None) | dict | Create a note attached to a media item |
+| media_note_delete(note_id: str, extra_data: Optional[Dict] = None) | bool | Delete a note attached to a media item |
+| media_seen(media_ids: List[str], skipped_media_ids: List[str] = []) | bool | Mark media as seen |
+| media_likers(media_id: str) | List\[UserShort] | Return users who liked this post |
+| media_likers_gql(media_pk: str, amount: int = 0) | List\[dict] | Return users who liked this post through the web GraphQL doc_id endpoint |
+| archive_medias(amount: int = 0) | List\[Media] | Get archived media from your account |
+| media_archive(media_id: str) | bool | Archive media |
+| media_unarchive(media_id: str) | bool | Unarchive media |
+| media_pin(media_pk: str) | bool | Pin media to profile |
+| media_unpin(media_pk: str) | bool | Unpin media from profile |
+| media_template_v1(media_id: str) | dict | Fetch a clip template payload for a Reel/clip media |
+| clip_mashup_info(media_pk: str) | dict | Fetch Reel remix/reuse availability metadata |
+| clip_seen(media_ids: List[str], blend_media_ids: List[str] = None) | bool | Mark Reels/Clips as seen through the Clips seen-state endpoint |
+| clip_pin(media_pk: str) | bool | Pin Reel to the Reels tab/profile Reels grid |
+| clip_unpin(media_pk: str) | bool | Unpin Reel from the Reels tab/profile Reels grid |
+| clip_change_cover(media_pk: str, cover_path: Path) | bool | Change the cover image for a published Reel |
+| media_create_livestream(title: str = "Instagram Live") | dict | Create a new livestream and return stream metadata |
+| media_start_livestream(broadcast_id: str) | dict | Start an existing livestream |
+| media_end_livestream(broadcast_id: str) | dict | End an existing livestream |
+| media_get_livestream_info(broadcast_id: str) | dict | Get livestream info |
+| media_get_livestream_comments(broadcast_id: str) | dict | Get livestream comments |
+| media_get_livestream_viewers(broadcast_id: str) | dict | Get livestream viewers |
+
+Media notes are separate from Direct inbox Notes. Use `media_note_create()` and `media_note_delete()` for the note surface attached to a post or Reel; use the [Notes guide](notes.md) for Direct inbox Notes.
+
+Use `clip_seen()` for Reels/Clips. `media_seen()` keeps the older story/reel-tray seen payload. Instagram still decides whether a seen-state event is counted in view analytics.
 
 Low level methods:
 
-| Method                                                          | Return       | Description
-| --------------------------------------------------------------- | ------------ | --------------------------------------------
-| media_info_a1(media_pk: int, max_id: str = None)                | Media        | Get Media from PK by Public Web API
-| media_info_gql(media_pk: int)                                   | Media        | Get Media from PK by Public Graphql API
-| media_info_v1(media_pk: int)                                    | Media        | Get Media from PK by Private Mobile API
-| user_medias_gql(user_id: str, amount: int = 50, sleep: int = 2) | List\[Media] | Get a user's media by Public Graphql API
-| user_medias_paginated_gql(user_id: str, amount: int = 50, sleep: int = 2, end_cursor=None) | Tuple\[List\[Media], str] | Get a page of user's media by Public Graphql API
-| user_medias_v1(user_id: str, amount: int = 18)                  | List\[Media] | Get a user's media by Private Mobile API
-| user_medias_paginated_v1(user_id: str, amount: int = 0, end_cursor="") | Tuple\[List\[Media], str] | Get a page of user's media by Private Mobile API
-| user_clips_v1(user_id: str, amount: int = 50)                  | List\[Media] | Get a user's clip by Private Mobile API
-| user_clips_paginated_v1(user_id: str, amount: int = 50, end_cursor="") | Tuple\[List\[Media], str] | Get a page of user's clip by Private Mobile API
-| user_videos_v1(user_id: str, amount: int = 50)                  | List\[Media] | Get a user's video by Private Mobile API
-| user_videos_paginated_v1(ser_id: int, amount: int = 50, end_cursor="") | Tuple\[List\[Media], str] | Get a page of user's video by Private Mobile API
-| usertag_medias_gql(user_id: str, amount: int = 20)              | List\[Media] | Get medias where a user is tagged by Public Graphql API
-| usertag_medias_v1(user_id: str, amount: int = 20)               | List\[Media] | Get medias where a user is tagged by Private Mobile API
+| Method | Return | Description |
+| --- | --- | --- |
+| media_info_gql(media_pk: str) | Media | Get media from PK via public GraphQL API. Falls back from legacy `query_hash` to the newer `doc_id` media query when available. |
+| media_info_v1(media_pk: str) | Media | Get media from PK via private mobile API |
+| media_info_v2(media_id: str) | Media | Alternative source for media info via `discover/media_metadata/` (`media_or_ad` payload). Useful as fallback when `media_info_v1` fails on certain ad-tagged or sponsored media. Strips `_userid` suffix automatically. |
+| user_medias_gql(user_id: str, amount: int = 0, sleep: int = 0) | List\[Media] | Get user media via public GraphQL API |
+| user_medias_paginated_gql(user_id: str, amount: int = 0, sleep: int = 2, end_cursor=None) | Tuple[List\[Media], str] | Get one public GraphQL page of user media |
+| user_medias_chunk_gql(user_id: str, sleep: int = 2, end_cursor=None, amount: int = 0) | Tuple[List\[Media], str] | Compatibility alias for one public GraphQL page of user media |
+| user_medias_v1(user_id: str, amount: int = 0) | List\[Media] | Get user media via private mobile API |
+| user_medias_paginated_v1(user_id: str, amount: int = 0, end_cursor="") | Tuple[List\[Media], str] | Get one private API page of user media |
+| user_medias_chunk_v1(user_id: str, end_cursor: str = "") | Tuple[List\[Media], str] | Compatibility alias for one private API page of user media |
+| user_clips_v1(user_id: str, amount: int = 0) | List\[Media] | Get user clips via private mobile API |
+| user_clips_paginated_v1(user_id: str, amount: int = 0, end_cursor="") | Tuple[List\[Media], str] | Get one private API page of clips |
+| user_clips_chunk_v1(user_id: str, end_cursor: str = "") | Tuple[List\[Media], str] | Compatibility alias for one private API page of clips |
+| user_videos_v1(user_id: str, amount: int = 0) | List\[Media] | Get user videos via private mobile API |
+| user_videos_paginated_v1(user_id: int, amount: int = 0, end_cursor="") | Tuple[List\[Media], str] | Get one private API page of videos |
+| user_videos_chunk_v1(user_id: str, end_cursor: str = "") | Tuple[List\[Media], str] | Compatibility alias for one private API page of videos |
+| usertag_medias_gql(user_id: str, amount: int = 0, sleep: int = 2) | List\[Media] | Get media where a user is tagged via public GraphQL API |
+| usertag_medias_paginated_gql(user_id: str, amount: int = 0, sleep: int = 2, end_cursor=None) | Tuple[List\[Media], str] | Get one public GraphQL page of media where a user is tagged |
+| usertag_medias_v1(user_id: str, amount: int = 0) | List\[Media] | Get media where a user is tagged via private mobile API |
+| usertag_medias_paginated_v1(user_id: str, amount: int = 0, end_cursor="") | Tuple[List\[Media], str] | Get one private API page of media where a user is tagged |
+| usertag_medias_v1_chunk(user_id: str, max_id: str = "") | Tuple[List\[Media], str] | Compatibility alias for one private API page of tagged media |
+| archive_medias_v1(amount: int = 0) | List\[Media] | Get archived media via private mobile API |
+| archive_medias_paginated_v1(amount: int = 0, end_cursor="") | Tuple[List\[Media], str] | Get one private API page of archived media |
 
 ### Example:
 
@@ -77,6 +112,9 @@ Low level methods:
 2243811726252050162
 
 >>> cl.media_pk_from_url("https://www.instagram.com/p/BjNLpA1AhXM/")
+1787135824035452364
+
+>>> cl.media_pk_from_url("https://www.instagram.com/share/p/BA123456789/")
 1787135824035452364
 
 >>> cl.media_info(1787135824035452364).dict()
@@ -141,6 +179,9 @@ Low level methods:
 >>> cl.media_archive('2155832952940083788_1903424587')
 True
 
+>>> [media.pk for media in cl.archive_medias(amount=5)]
+['2155832952940083788']
+
 >>> cl.media_unarchive('2155832952940083788_1903424587')
 True
 
@@ -200,22 +241,83 @@ True
 ['2019-06-05', '2019-03-23', '2019-03-23', '2018-11-15', '2018-10-16']
 ['2018-10-16', '2018-10-11', '2018-10-09', '2018-10-09', '2018-08-02']
 
+# Stream user media without storing every fetched page
+
+>>> for media in client.iter_user_medias(1903424587, amount=100, page_size=25):
+...     print(media.pk, media.code)
+...
+
+# Resume tagged-media fetches from a stored cursor
+
+>>> tagged, end_cursor = client.usertag_medias_paginated(1903424587, 12, end_cursor="")
+>>> next_tagged, end_cursor = client.usertag_medias_paginated(1903424587, 12, end_cursor=end_cursor)
+
+>>> media_id = cl.media_id(1787135824035452364)
+>>> cl.media_like(media_id)
+True
+>>> cl.media_unlike(media_id)
+True
+
+>>> media_pk = cl.media_pk_from_url("https://www.instagram.com/p/CGgDsi7JQdS/")
+>>> story = cl.media_share_to_story(media_pk)
+>>> story.pk
+'3155832952940083788'
+
 ```
+
+Notes:
+
+* `media_info()` uses private/mobile lookup first when the client has authorization data or a saved `sessionid`, then falls back to public/web lookup. Without authorization, it keeps public/web-first behavior. Explicit `media_info_gql()` still calls the public/web path directly.
+* `user_medias()` and `user_medias_paginated()` use private/mobile lookup first when the client has authorization data or a saved `sessionid`, then fall back to public/web lookup. Without authorization, they keep public/web-first behavior. Explicit `_gql` methods still call the public/web path directly.
+* Use `iter_user_medias()` for large profile media scans when you want each `Media` as soon as its page is fetched. Set `page_size` to control request size; leave it as `0` to keep the endpoint default.
+* `usertag_medias()` and `usertag_medias_paginated()` use private/mobile lookup first when the client has authorization data or a saved `sessionid`, then fall back to public/web lookup. Without authorization, they keep public/web-first behavior. Explicit `_gql` methods still call the public/web path directly.
+* For Reels where Instagram hides like/view counts, the public GraphQL path can expose play/view counts but not hidden like totals; `like_count` can be `-1`.
+* Extended media metadata from Instagram payloads is available on `Media` when returned by the source API, including caption edit state, dimensions, audio presence, hidden count state, viewer save/reshare state, paid partnership/affiliate flags, DASH video info, clips music attribution, and inline comment previews.
+* `media_pk_from_url()` now also resolves `share/p/...` URLs before extracting the canonical shortcode.
+* Accepted Instagram Collabs/coauthor users from private media payloads are available as `media.coauthor_producers`. This is separate from upload-time `coauthor_user_ids`, which only sends collaborator invitations.
+* `media_edit()` uses `caption` and optional `location`/`usertags`; for IGTV posts it can also derive or send a separate `title`.
+* `media_link_reel()` uses Instagram's private `media/{media_id}/edit_media/` endpoint. Pass full media IDs when you have them; plain media PKs are normalized with `media_id()` before the request.
+
+Extended `Media` metadata fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `comments_preview` | `MediaCommentsPreview` or `None` | Inline public/web comment preview when Instagram includes `edge_media_to_parent_comment` or preview comment edges. Use full comments helpers for complete pagination. |
+| `hoisted_comments` | `List[MediaInlineComment]` | Comments Instagram hoists separately from the regular preview list. Usually empty. |
+| `comments_preview.count` | `int` | Total count reported for the inline preview edge. |
+| `comments_preview.has_next_page` | `bool` | Whether the inline preview edge has more comments after `end_cursor`. |
+| `comments_preview.end_cursor` | `str` or `None` | Cursor reported by the inline preview edge. |
+| `comments_preview.comments` | `List[MediaInlineComment]` | Inline parent comments already present in the media payload. |
+| `MediaInlineComment.pk` | `str` | Comment id. |
+| `MediaInlineComment.text` | `str` | Comment text. |
+| `MediaInlineComment.user` | `UserShort` | Comment author. |
+| `MediaInlineComment.created_at_utc` | `datetime` | Comment creation time. |
+| `MediaInlineComment.has_liked` | `bool` or `None` | Current viewer like state when Instagram sends it. |
+| `MediaInlineComment.like_count` | `int` or `None` | Inline like count from the comment edge. |
+| `MediaInlineComment.replied_to_comment_id` | `str` or `None` | Parent comment id for inline replies. |
+| `MediaInlineComment.did_report_as_spam` | `bool` or `None` | Viewer report state when Instagram sends it. |
+| `MediaInlineComment.is_restricted_pending` | `bool` or `None` | Restricted/pending state when Instagram sends it. |
+| `MediaInlineComment.replies_count` | `int` | Number of threaded replies reported inline. |
+| `MediaInlineComment.replies` | `List[MediaInlineComment]` | Inline threaded replies already present in the media payload. |
 
 ## Download media
 
 | Method                                                       | Return  | Description                                                         |
 | ------------------------------------------------------------ | ------- | ------------------------------------------------------------------- |
-| photo_download(media_pk: int, folder: Path)                  | Path    | Download photo (path to photo with best resoluton)                  |
-| photo_download_by_url(url: str, filename: str, folder: Path) | Path    | Download photo by URL (path to photo with best resoluton)           |
-| video_download(media_pk: int, folder: Path)                  | Path    | Download video (path to video with best resoluton)                  |
-| video_download_by_url(url: str, filename: str, folder: Path) | Path    | Download Video by URL (path to video with best resoluton)           |
-| album_download(media_pk: int, folder: Path)                  | Path    | Download Album (multiple paths to photo/video with best resolutons) |
-| album_download_by_urls(urls: List[str], folder: Path)        | Path    | Download Album by URLs (multiple paths to photo/video)              |
+| photo_download(media_pk: int, folder: Path, overwrite: bool = True)                  | Path    | Download photo (path to photo with best resolution)                  |
+| photo_download_by_url(url: str, filename: str, folder: Path, overwrite: bool = True) | Path    | Download photo by URL (path to photo with best resolution)           |
+| video_download(media_pk: int, folder: Path, overwrite: bool = True)                  | Path    | Download video (path to video with best resoluton)                  |
+| video_download_by_url(url: str, filename: str, folder: Path, overwrite: bool = True) | Path    | Download Video by URL (path to video with best resoluton)           |
+| album_download(media_pk: int, folder: Path, overwrite: bool = True)                  | Path    | Download Album (multiple paths to photo/video with best resolutons) |
+| album_download_by_urls(urls: List[str], folder: Path, overwrite: bool = True)        | Path    | Download Album by URLs (multiple paths to photo/video)              |
 | igtv_download(media_pk: int, folder: Path)                   | Path    | Download IGTV (path to video with best resoluton)                   |
 | igtv_download_by_url(url: str, filename: str, folder: Path)  | Path    | Download IGTV by URL (path to video with best resoluton)            |
 | clip_download(media_pk: int, folder: Path)                   | Path    | Download Reels Clip (path to video with best resoluton)             |
 | clip_download_by_url(url: str, filename: str, folder: Path)  | Path    | Download Reels Clip by URL (path to video with best resoluton)      |
+
+`photo_download()` resolves photo metadata through the public/web media-info path first so it can use the largest
+display resource Instagram exposes for the post, then falls back to private/mobile metadata when the public web
+endpoint is gated. It does not rewrite CDN URLs manually.
 
 ### Example:
 
@@ -233,6 +335,16 @@ True
 PosixPath('/tmp/45588546_367538213983456_6830188946193737023_n.mp4')
 
 ```
+
+``` python
+
+>>> # Skip re-downloading if the target file already exists
+>>> cl.video_download_by_url(video_url, folder='/tmp', overwrite=False)
+PosixPath('/tmp/45588546_367538213983456_6830188946193737023_n.mp4')
+
+```
+
+If Instagram returns a `Content-Length` header and the downloaded file is shorter, download helpers remove the partial file and raise `ClientIncompleteReadError`.
 
 ``` python
 
@@ -254,15 +366,35 @@ Upload medias to your feed. Common arguments:
 * `caption`  - Text for you post
 * `usertags` - List[Usertag] of mention users (see `Usertag` in [types.py](https://github.com/subzeroid/instagrapi/blob/master/instagrapi/types.py))
 * `location` - Location (e.g. `Location(name='Test', lat=42.0, lng=42.0)`)
+* `schedule_at` - Unix timestamp in seconds or `datetime` for scheduled publishing on eligible professional accounts
 
 | Method                                                                                                                                 | Return  | Description
 | -------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------
-| photo_upload(path: Path, caption: str, upload_id: str, usertags: List[Usertag], location: Location, extra_data: Dict = {})             | Media   | Upload photo (Support JPG files)
-| video_upload(path: Path, caption: str, thumbnail: Path, usertags: List[Usertag], location: Location, extra_data: Dict = {})            | Media   | Upload video (Support MP4 files)
-| album_upload(paths: List[Path], caption: str, usertags: List[Usertag], location: Location, extra_data: Dict = {})                      | Media   | Upload Album (Support JPG/MP4 files)
+| photo_upload(path: Path, caption: str, upload_id: str, usertags: List[Usertag], location: Location, extra_data: Dict = {}, schedule_at: int \| datetime = None, coauthor_user_ids: List[int \| str] = None)             | Media   | Upload photo (Support JPG files)
+| video_upload(path: Path, caption: str, thumbnail: Path, usertags: List[Usertag], location: Location, extra_data: Dict = {}, schedule_at: int \| datetime = None, coauthor_user_ids: List[int \| str] = None)            | Media   | Upload video (Support MP4 files)
+| album_upload(paths: List[Path], caption: str, usertags: List[Usertag], location: Location, extra_data: Dict = {}, schedule_at: int \| datetime = None, coauthor_user_ids: List[int \| str] = None)                      | Media   | Upload Album (Support JPG/MP4 files)
 | igtv_upload(path: Path, title: str, caption: str, thumbnail: Path, usertags: List[Usertag], location: Location, extra_data: Dict = {}) | Media   | Upload IGTV (Support MP4 files)
-| clip_upload(path: Path, caption: str, thumbnail: Path, usertags: List[Usertag], location: Location, extra_data: Dict = {})             | Media   | Upload Reels Clip (Support MP4 files)
-| clip_upload_as_reel_with_music(path: Path, caption: str, track: Track, extra_data: Dict = {}) | Media | Upload Reels Clip as reel with music metadata
+| clip_upload(path: Path, caption: str, thumbnail: Path, usertags: List[Usertag], location: Location, extra_data: Dict = {}, trial: bool = False, trial_graduation_strategy: str = "manual", share_to_facebook: bool = False, topics: List[int \| str] = None, show_preview_in_feed: bool = True) | Media | Upload Reels Clip (Support MP4 files). Set `trial=True` to publish a Trial Reel on eligible accounts. Set `share_to_facebook=True` to cross-post to a linked Facebook destination. Pass Reel topic `fit_id` values with `topics=[...]`. Set `show_preview_in_feed=False` to hide the feed/profile grid preview
+| clip_change_cover(media_pk: str, cover_path: Path) | bool | Change the cover image for a published Reel
+| clip_trial_eligible() | bool | Check whether Reel creation preflight reports Trial Reels enabled before uploading video bytes
+| clip_info_for_creation() | dict | Get Reel creation preflight configuration from the mobile API
+| clip_interest_topics() | List[dict] | Get Reel topic catalog items with `name` and `fit_id` values for `clip_upload(..., topics=...)`
+| clip_share_to_fb_config() | dict | Get Reel Facebook sharing configuration from the mobile API
+| clip_share_to_fb_unified_config() | dict | Get the Android cross-posting unified config used by the Reel composer
+| clip_share_to_fb_unified_destination(config: Dict = None) | dict | Resolve confirmed Reel Facebook destination fields from the unified cross-posting config
+| clip_share_to_fb_destination(config: Dict = None, destination_id: str = None, destination_type: Literal["USER", "PAGE"] = None) | dict | Resolve confirmed Reel Facebook destination fields without treating Account Center linking ids as publish destinations
+| clip_share_to_fb_extra_data(config: Dict = None, destination_id: str = None, destination_type: Literal["USER", "PAGE"] = None) | dict | Build modern Reel Facebook cross-post configure fields for manual `extra_data`
+| clip_music_extra_data(track: Track or dict, product: MUSIC_PRODUCT = "story_camera_clips_v2", extra_data: Dict = {}) | dict | Build Reels music configure fields for manual `clip_upload(..., extra_data=...)`
+| clip_upload_with_music(path: Path, caption: str, track: Track or dict, thumbnail: Path = None, product: MUSIC_PRODUCT = "story_camera_clips_v2", extra_data: Dict = {}) | Media | Upload a Reel with music metadata without local audio muxing
+| clip_upload_as_reel_with_music(path: Path, caption: str, track: Track, extra_data: Dict = {}) | Media | Upload a Reel after locally muxing the track into the video with MoviePy
+| photo_upload_with_music(path: Path, caption: str, track: Track or dict, extra_data: Dict = {}, schedule_at: int \| datetime = None) | Media | Upload feed photo with music metadata
+| album_upload_with_music(paths: List[Path], caption: str, track: Track or dict, extra_data: Dict = {}, schedule_at: int \| datetime = None) | Media | Upload feed album/carousel with music metadata
+
+For video uploads in Android environments, pass `thumbnail=...` to avoid automatic thumbnail generation, or install the optional video dependencies, MoviePy `2.2.1`, and executable ffmpeg. See [Pydroid and ffmpeg](pydroid.md) and [Termux](termux.md).
+
+Scheduled publishing is available only where the Instagram app enables scheduled content, typically professional
+creator/business accounts. `schedule_at` works for feed photo, feed video, and album/carousel uploads. Reels, IGTV,
+Story, Direct, and cutout sticker upload helpers do not use this scheduled publishing flow.
 
 
 In `extra_data`, you can pass additional media settings, for example:
@@ -272,15 +404,84 @@ In `extra_data`, you can pass additional media settings, for example:
 | custom_accessibility_caption  | String | [Set alternative text](https://github.com/subzeroid/instagrapi/issues/351) `{"custom_accessibility_caption": "ALT TEXT HERE"}`
 | like_and_view_counts_disabled | Int    | [Disable like and view counts](https://github.com/subzeroid/instagrapi/issues/382) `{"like_and_view_counts_disabled": 1}`
 | disable_comments              | Int    | Disable comments `{"disable_comments": 1}`
-| invite_coauthor_user_id       | Int    | Add a coauthor to the post `{"invite_coauthor_user_id": "USER ID OF COAUTHOR HERE"}`. You also need to add this user to `usertags`
+| invite_coauthor_user_ids      | List   | Low-level coauthor invite field. Prefer `coauthor_user_ids=[...]` on `photo_upload`, `video_upload`, or `album_upload`
+
+Trial Reels are available only for accounts where Instagram has enabled the feature. Use `clip_trial_eligible()` as a
+lightweight preflight if you process multiple accounts and want to avoid uploading video bytes for accounts where the
+Reel composer does not report Trial Reels enabled. Instagram can still reject Trial Reel publishing later during
+configure, so keep upload-side error handling for backend eligibility decisions. When `trial=True`, `clip_upload` sends
+`trial_params={"graduation_strategy": "manual"}` by default and disables feed preview for the upload.
+
+For regular Reels, pass `show_preview_in_feed=False` to hide the Reel preview from the feed/profile grid. instagrapi sends this as Instagram's low-level `clips_share_preview_to_feed` value `"0"`; the default `True` sends `"1"`. The legacy `feed_show` argument is still accepted as a raw override for callers that already build wire-format payloads.
+
+Reel topics use Instagram's interest topic `fit_id` values. Call `clip_interest_topics()` to get the current catalog, then pass selected ids with `clip_upload(..., topics=[topic["fit_id"]])`; instagrapi sends them as the Android `interest_topics` configure field.
+
+Facebook Reel sharing requires a Facebook account/page linked in the Instagram app. Modern Android app builds no longer use only `{"share_to_facebook": 1}` for Reels; they also send destination and cross-posting fields such as `share_to_fb_destination_id`, `share_to_fb_destination_type`, `no_token_crosspost`, and `attempt_id`.
+
+`clip_share_to_fb_config()` calls the lightweight Reel sharing preflight endpoint. On recent app versions this response contains availability flags, not the full Account Center destination state, and some linked accounts can still return `share_to_fb_unavailable=True` even when the Instagram app can cross-post manually. When `clip_upload(..., share_to_facebook=True)` has no manual destination override, instagrapi now falls back to Android's `CrosspostingUnifiedConfigsQuery` via `clip_share_to_fb_unified_config()` and uses `clip_share_to_fb_unified_destination()` only if that response contains confirmed Reel-to-Facebook destination fields. Use `clip_share_to_fb_destination()` when a config or captured app response already contains confirmed destination fields; it normalizes `destination_id`, `destination_type`, optional audience, and validation bypass values. For accounts where the app can cross-post manually but automatic discovery still has no destination, pass `fb_destination_id` and `fb_destination_type="USER"` or `"PAGE"` to `clip_upload(...)`, or build `extra_data` manually with `clip_share_to_fb_extra_data(...)`. The destination type is typed as `Literal["USER", "PAGE"]`, and those uppercase values are what the Reel configure payload sends to Instagram. If neither the preflight/unified config data nor the caller provides a destination, instagrapi raises `ClientError` before uploading video bytes. The Reel cross-post `attempt_id` is generated automatically; only pass it to `clip_share_to_fb_extra_data(...)` when replaying or testing a specific low-level payload.
+`bloks_fxcal_link_reels_share()` exposes the raw Account Center Bloks link action seen on the Reel composer surface, but it starts an app linking flow and does not replace the interactive Facebook linking step in Instagram. Treat Account Center Bloks `fbid`, auth, and linking values as linking context, not as `fb_destination_id`; only use them as a Reel publish destination after verifying that the final Reel configure request sends the same value as `share_to_fb_destination_id`. See [#2556](https://github.com/subzeroid/instagrapi/issues/2556) for tracking automatic destination discovery.
 
 ### Example:
 
 ``` python
+>>> import time
+>>> from pathlib import Path
 >>> from instagrapi import Client
 
 >>> cl = Client()
 >>> cl.login(USERNAME, PASSWORD)
+
+>>> scheduled_photo = cl.photo_upload(
+...     "/app/image.jpg",
+...     "Scheduled photo",
+...     schedule_at=int(time.time()) + 3600,
+... )
+
+>>> if cl.clip_trial_eligible():
+...     trial_reel = cl.clip_upload(
+...         "/app/reel.mp4",
+...         "Trying a new Reel format",
+...         trial=True,
+...     )
+
+>>> topics = cl.clip_interest_topics()
+>>> technology_topic = next(topic for topic in topics if topic["name"] == "Technology")
+>>> reel = cl.clip_upload(
+...     "/app/reel.mp4",
+...     "Reel with a topic",
+...     topics=[technology_topic["fit_id"]],
+... )
+
+>>> reel = cl.clip_upload(
+...     "/app/reel.mp4",
+...     "Cross-posting this Reel to Facebook",
+...     share_to_facebook=True,
+... )
+
+>>> reel = cl.clip_upload(
+...     "/app/reel.mp4",
+...     "Cross-posting with explicit Facebook destination",
+...     share_to_facebook=True,
+...     fb_destination_id="FACEBOOK_DESTINATION_ID",
+...     fb_destination_type="USER",
+... )
+
+>>> fb_extra = cl.clip_share_to_fb_extra_data(
+...     destination_id="FACEBOOK_DESTINATION_ID",
+...     destination_type="USER",
+... )
+>>> reel = cl.clip_upload(
+...     "/app/reel.mp4",
+...     "Cross-posting with explicit Facebook destination",
+...     extra_data=fb_extra,
+... )
+
+>>> reel = cl.clip_upload(
+...     "/app/reel.mp4",
+...     "Reel with an updated cover",
+...     thumbnail=Path("/app/cover-a.jpg"),
+... )
+>>> cl.clip_change_cover(reel.pk, Path("/app/cover-b.jpg"))
 
 >>> media = cl.photo_upload(
     "/app/image.jpg",
@@ -318,6 +519,27 @@ In `extra_data`, you can pass additional media settings, for example:
  'resources': []}
 ```
 
+Upload a photo or carousel with feed music:
+
+``` python
+>>> music = cl.music_in_feed_audio_browser()
+>>> track = music["items"][0]["playlist"]["preview_items"][0]["track"]
+
+>>> photo = cl.photo_upload_with_music(
+    "/app/image.jpg",
+    "Photo with music",
+    track,
+    alacorn_session_id=music["alacorn_session_id"],
+)
+
+>>> album = cl.album_upload_with_music(
+    ["/app/image.jpg", "/app/image2.jpg"],
+    "Carousel with music",
+    track,
+    alacorn_session_id=music["alacorn_session_id"],
+)
+```
+
 Now let's mention users (Usertag) and location:
 
 ``` python
@@ -333,6 +555,16 @@ Now let's mention users (Usertag) and location:
     "Test caption for photo with #hashtags and mention users such @example",
     usertags=[Usertag(user=example, x=0.5, y=0.5)],
     location=Location(name='Russia, Saint-Petersburg', lat=59.96, lng=30.29)
+)
+
+>>> other = cl.user_info_by_username('other')
+>>> album = cl.album_upload(
+    ["/app/image.jpg", "/app/image2.jpg"],
+    "Album with per-slide tags",
+    usertags=[
+        [Usertag(user=example, x=0.5, y=0.5)],
+        [Usertag(user=other, x=0.25, y=0.75)],
+    ],
 )
 
 >>> media.dict()
@@ -373,7 +605,23 @@ Now let's mention users (Usertag) and location:
  'resources': []}
 ```
 
+For `album_upload`, nested `usertags` are matched by index with `paths`: `usertags[0]` applies to `paths[0]`, `usertags[1]` applies to `paths[1]`, and so on. A flat `List[Usertag]` is still accepted for backward compatibility and tags only the first carousel item.
+
+When reading an album, the same index rule applies to resources: tags for the first carousel item are in `media.resources[0].usertags`, tags for the second item are in `media.resources[1].usertags`, etc.
+
 Reels:
+
+Timeline helpers:
+
+```python
+>>> first_page = cl.get_timeline_feed("cold_start_fetch")
+>>> second_page = cl.get_timeline_feed(max_id=first_page["next_max_id"])
+>>> cl.reels(amount=10)
+>>> cl.explore_reels(amount=10)
+>>> cl.friends_reels(amount=10)
+```
+
+`get_timeline_feed()` remembers media ids from the previous response and sends `seen_posts` plus minimal `feed_view_info` when `max_id` is used. For stateless pagination, pass `seen_posts=...` and `feed_view_info=...` explicitly.
 
 ```python
 >>> clips = cl.user_clips_v1(25025320, amount=2)

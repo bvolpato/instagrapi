@@ -2,11 +2,22 @@
 
 Viewing and downloading tracks
 
-| Method                                                                 | Return      | Description
-| ---------------------------------------------------------------------- | ----------- | --------------------------------------------
-| track_info_by_canonical_id(music_canonical_id: str)                    | Track       | Get Track by music_canonical_id
-| track_download_by_url(url: str, filename: str = "", folder: Path = "") | Path        | Download track by URL
-| search_music(query: str)                                               | List[Track] | Return list of tracks
+| Method | Return | Description |
+| --- | --- | --- |
+| track_info_by_canonical_id(music_canonical_id: str) | Track | Get track by `music_canonical_id` |
+| track_info_by_id(track_id: str, max_id: str = "") | dict | Get raw track payload by internal Instagram track ID |
+| track_stream_info_by_id(track_id: str, max_id: str = "") | dict | Streamed clips-pivot page (`clips/stream_clips_pivot_page/`) — clips using this audio + audio-asset metadata, the surface IG's app uses to render the "Audio" page |
+| track_download_by_url(url: str, filename: str = "", folder: Path = "") | Path | Download track by URL |
+| search_music(query: str) | List[Track] | Search music and return track objects |
+| music_in_feed_audio_browser(browse_session_id: str = None) | dict | Browse music candidates for feed photo and carousel uploads |
+| music_trending(product: MUSIC_PRODUCT = "feed_post") | dict | Browse trending music candidates |
+| music_top_trends(product: MUSIC_PRODUCT = "music_in_feed", page_size: int = 15) | dict | Browse top trending music candidates |
+| music_search_v2(query: str, product: MUSIC_PRODUCT = "music_in_feed", from_typeahead: bool = False, search_session_id: str = None, browse_session_id: str = None) | dict | Search music through the current app endpoint |
+| music_keyword_search(query: str, product: MUSIC_PRODUCT = "music_in_feed", num_keywords: int = 3, search_session_id: str = "", browse_session_id: str = None) | dict | Search music keyword suggestions |
+| music_clips_audio_browser(product: MUSIC_PRODUCT = "story_camera_clips_v2", browse_session_id: str = None) | dict | Browse music candidates for the Reels/Clips camera |
+| music_verify_original_audio_title(original_audio_name: str) | bool | Validate an original audio title for Reels publishing |
+| music_bookmark(original_audio_id: str, surface_requested_from: str = "audio_aggregation_page") | bool | Bookmark an original audio track |
+| music_bookmarked(max_id: str = "") | dict | Retrieve bookmarked music tracks |
 
 ### Example:
 
@@ -85,3 +96,9 @@ PosixPath('/tmp/84846439_2484536748531420_3971102873273499648_n.m4a')
 }
 
 ```
+
+Notes:
+
+* `track_info_by_canonical_id()` is the high-level typed path and usually the one you want for reels/clips music metadata.
+* `track_info_by_id()` returns the lower-level raw response shape, which is useful for debugging or when you already have an Instagram track ID.
+* The `music_*` helpers expose raw app music surfaces so callers can inspect rollout-specific fields and reuse IDs in upload flows.

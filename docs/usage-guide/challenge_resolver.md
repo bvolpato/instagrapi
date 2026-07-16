@@ -1,4 +1,8 @@
 
+## Challenge Resolver
+
+Instagrapi lets you attach handlers for common login challenge flows such as code verification and password reset.
+
 ## New password challenge
 
 You can automatically change your password to solve the challenge from Instagram.
@@ -36,9 +40,28 @@ def challenge_code_handler(username, choice):
     return False
 
 cl = Client()
+cl.phone_number = "+15551234567"  # required for submit_phone challenges
 cl.challenge_code_handler = challenge_code_handler
 cl.login(IG_USERNAME, IG_PASSWORD)
 ```
+
+Notes:
+
+* `challenge_code_handler(username, choice)` should return the received code as a string. Returning a falsey value means no code is available yet.
+* Login `submit_phone` challenges use `client.phone_number`, then call `challenge_code_handler(username, ChallengeChoice.SMS)` for the received code.
+* Signup SMS challenges use the `phone_number` passed to `signup(...)` and call `challenge_code_handler(username, ChallengeChoice.SMS)` for the received code.
+* Phone-only signup is supported with `signup(username, password, email="", phone_number="+15551234567")`. If both `email` and `phone_number` are provided, instagrapi keeps the email signup flow and uses the phone number only for signup challenges.
+* `signup(...)` emits a `RuntimeWarning` because it uses Instagram's legacy account-create flow and should be treated as experimental. On modern Instagram app versions this flow is often rejected with `SignupSpamError` / `feedback_required` because the official app uses additional signup checks that instagrapi does not currently generate. Treat this as a platform rejection, not as a malformed SMS/email code.
+* Current `master` raises a clearer `ChallengeRequired` for `/auth_platform/?apc=...` flows. That path is not yet supported automatically and still requires manual verification.
+* Native challenge payloads with `challenge.native_flow=true` and an opaque `/challenge/...` `api_path` are manual checkpoints. They do not expose an SMS/email/password step, so `challenge_code_handler` and `change_password_handler` will not be called for them.
+* Bloks redirect checkpoints such as `bloks_action="com.bloks.www.ig.challenge.redirect.async"` or placeholder `step_name="STEP_NAME"` require manual confirmation in the official Instagram app or web flow on a trusted device; instagrapi raises `ChallengeRequired` with the sanitized challenge context instead of treating this as a legacy step.
+* For long-running automation, persist client settings around challenge handling so you can retry without rebuilding the entire device/session state.
+
+## Selfie and manual review challenges
+
+`ChallengeSelfieCaptcha` and selfie/manual-review style flows are account review decisions by Instagram. `instagrapi` does not provide a generic bypass for these challenges. When they appear repeatedly during signup or login, stop the automated flow, keep the same account/device/proxy context, and resolve the account manually in the official app if possible.
+
+For bug reports, include sanitized `client.last_json`, the exception class, and the flow that triggered it. Do not share cookies, session IDs, phone numbers, email addresses, passwords, or verification codes.
 
 For example, you can get the code through the IMAP of Gmail:
 

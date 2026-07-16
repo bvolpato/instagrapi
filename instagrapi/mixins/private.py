@@ -10,16 +10,22 @@ from requests.packages.urllib3.util.retry import Retry
 
 from instagrapi import config
 from instagrapi.exceptions import (
+    AccountContactPointRequired,
+    AccountEditError,
+    AccountSuspended,
     BadPassword,
     ChallengeRequired,
     ClientBadRequestError,
     ClientConnectionError,
     ClientError,
     ClientForbiddenError,
+    ClientIncompleteReadError,
     ClientJSONDecodeError,
     ClientNotFoundError,
     ClientRequestTimeout,
     ClientThrottledError,
+    ClientUnauthorizedError,
+    DirectMessageRequestsDisabled,
     FeedbackRequired,
     InvalidMediaId,
     InvalidTargetUser,
@@ -35,7 +41,53 @@ from instagrapi.exceptions import (
     UserNotFound,
     VideoTooLongException,
 )
-from instagrapi.utils import dumps, generate_signature, random_delay
+from instagrapi.utils.auth import generate_signature
+from instagrapi.utils.logging import truncate_log_text
+from instagrapi.utils.serialization import dumps
+from instagrapi.utils.timing import random_delay
+
+_DIRECT_MESSAGE_REQUESTS_DISABLED_MARKERS = (
+    "can't message this account unless they follow you",
+    "can't receive your message because they don't allow new message requests",
+    "doesn't allow new message requests",
+    "don't allow new message requests",
+    "does not allow new message requests",
+)
+
+_ACCOUNT_CONTACT_POINT_REQUIRED_MARKERS = ("need an email or confirmed phone number",)
+_LOGIN_CONTEXT_REJECTION_HINT = (
+    "This can also happen when Instagram rejects the proxy/IP, device fingerprint, "
+    "or login context, even if the password is correct."
+)
+
+
+def _private_message_text(message) -> str:
+    if isinstance(message, dict):
+        errors = message.get("errors")
+        if isinstance(errors, (list, tuple)):
+            return " ".join(str(error) for error in errors)
+        return " ".join(str(value) for value in message.values())
+    if isinstance(message, (list, tuple)):
+        return " ".join(str(item) for item in message)
+    return str(message or "")
+
+
+def _is_account_contact_point_required(endpoint: str, message) -> bool:
+    if not endpoint or "accounts/edit_profile" not in endpoint:
+        return False
+    normalized = _private_message_text(message).casefold()
+    return any(marker in normalized for marker in _ACCOUNT_CONTACT_POINT_REQUIRED_MARKERS)
+
+
+def _is_account_edit_error(endpoint: str) -> bool:
+    return bool(endpoint and "accounts/edit_profile" in endpoint)
+
+
+def _is_direct_message_requests_disabled(endpoint: str, message: str) -> bool:
+    if not endpoint or not message or "direct_v2/" not in endpoint:
+        return False
+    normalized = str(message).casefold().replace("’", "'")
+    return any(marker in normalized for marker in _DIRECT_MESSAGE_REQUESTS_DISABLED_MARKERS)
 
 
 def manual_input_code(self, username: str, choice=None):
@@ -80,36 +132,61 @@ class PrivateRequestMixin:
     change_password_handler = manual_change_password
     private_request_logger = logging.getLogger("private_request")
     request_timeout = 1
+    session_retry_total = 3
+    session_retry_backoff_factor = 2
+    session_retry_statuses = [429, 500, 502, 503, 504]
     domain = config.API_DOMAIN
     last_response = None
     last_json = {}
 
     def __init__(self, *args, **kwargs):
-        # setup request session with retries
         session = requests.Session()
-        try:
-            retry_strategy = Retry(
-                total=3,
-                status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["GET", "POST"],
-                backoff_factor=2,
-            )
-        except TypeError:
-            retry_strategy = Retry(
-                total=3,
-                status_forcelist=[429, 500, 502, 503, 504],
-                method_whitelist=["GET", "POST"],
-                backoff_factor=2,
-            )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
         self.private = session
-        self.private.verify = False  # fix SSLError/HTTPSConnectionPool
+        self.private.verify = getattr(self, "tls_verify", True)
         self.email = kwargs.pop("email", None)
         self.phone_number = kwargs.pop("phone_number", None)
-        self.request_timeout = kwargs.pop("request_timeout", self.request_timeout)
+        self.request_timeout = kwargs.pop("request_timeout", getattr(self, "request_timeout", self.request_timeout))
+        self.session_retry_total = kwargs.pop(
+            "session_retry_total",
+            getattr(self, "session_retry_total", self.session_retry_total),
+        )
+        self.session_retry_backoff_factor = kwargs.pop(
+            "session_retry_backoff_factor",
+            getattr(
+                self,
+                "session_retry_backoff_factor",
+                self.session_retry_backoff_factor,
+            ),
+        )
+        self.session_retry_statuses = list(
+            kwargs.pop(
+                "session_retry_statuses",
+                getattr(self, "session_retry_statuses", self.session_retry_statuses),
+            )
+        )
+        self._configure_private_session_retry()
         super().__init__(*args, **kwargs)
+
+    def _build_private_session_retry_strategy(self):
+        try:
+            return Retry(
+                total=self.session_retry_total,
+                status_forcelist=self.session_retry_statuses,
+                allowed_methods=["GET", "POST"],
+                backoff_factor=self.session_retry_backoff_factor,
+            )
+        except TypeError:
+            return Retry(
+                total=self.session_retry_total,
+                status_forcelist=self.session_retry_statuses,
+                method_whitelist=["GET", "POST"],
+                backoff_factor=self.session_retry_backoff_factor,
+            )
+
+    def _configure_private_session_retry(self):
+        adapter = HTTPAdapter(max_retries=self._build_private_session_retry_strategy())
+        self.private.mount("https://", adapter)
+        self.private.mount("http://", adapter)
 
     def small_delay(self):
         """
@@ -146,12 +223,8 @@ class PrivateRequestMixin:
             "X-Pigeon-Session-Id": self.generate_uuid("UFS-", "-1"),
             "X-Pigeon-Rawclienttime": str(round(time.time(), 3)),
             # "X-IG-Connection-Speed": "-1kbps",
-            "X-IG-Bandwidth-Speed-KBPS": str(
-                random.randint(2500000, 3000000) / 1000
-            ),  # "-1.000"
-            "X-IG-Bandwidth-TotalBytes-B": str(
-                random.randint(5000000, 90000000)
-            ),  # "0"
+            "X-IG-Bandwidth-Speed-KBPS": str(random.randint(2500000, 3000000) / 1000),  # "-1.000"
+            "X-IG-Bandwidth-TotalBytes-B": str(random.randint(5000000, 90000000)),  # "0"
             "X-IG-Bandwidth-TotalTime-MS": str(random.randint(2000, 9000)),  # "0"
             # "X-IG-EU-DC-ENABLED": "true", # <- type of DC? Eu is euro, but we use US
             # "X-IG-Prefetch-Request": "foreground",  # OLD from instabot
@@ -174,7 +247,12 @@ class PrivateRequestMixin:
             "X-MID": self.mid,  # e.g. X--ijgABABFjLLQ1NTEe0A6JSN7o, YRwa1QABBAF-ZA-1tPmnd0bEniTe
             "Accept-Encoding": "gzip, deflate",  # ignore zstd
             "Host": self.domain,
-            "X-FB-HTTP-Engine": "Liger",
+            "X-FB-HTTP-Engine": "Tigon/MNS/TCP",
+            "X-Tigon-Is-Retry": "False",
+            "X-Zero-Balance": "INIT",
+            "X-Zero-Eh": "",
+            "X-Zero-State": "unknown",
+            "Zero-HTTP-Network-Interface": "wifi",
             "Connection": "keep-alive",
             # "Pragma": "no-cache",
             # "Cache-Control": "no-cache",
@@ -213,6 +291,14 @@ class PrivateRequestMixin:
         if self.ig_www_claim:
             headers.update({"X-IG-WWW-Claim": self.ig_www_claim})
         return headers
+
+    def private_headers(self, headers=None):
+        request_headers = dict(self.base_headers)
+        if headers:
+            request_headers.update(headers)
+        if self.authorization and not any(key.lower() == "authorization" for key in request_headers):
+            request_headers["Authorization"] = self.authorization
+        return request_headers
 
     def set_country(self, country: str = "US"):
         """Set you country code (ISO 3166-1/3166-2)
@@ -260,16 +346,34 @@ class PrivateRequestMixin:
         bool
             A boolean value
         """
-        user_agent = (self.settings.get("user_agent") or "").replace(
-            self.locale, locale
-        )
+        user_agent = (self.settings.get("user_agent") or "").replace(self.locale, locale)
         self.settings["locale"] = self.locale = str(locale)
         self.set_user_agent(user_agent)  # update locale in user_agent
         if "_" in locale:
             self.set_country(locale.rsplit("_", 1)[1])
         return True
 
-    def set_timezone_offset(self, seconds: int = 0):
+    @staticmethod
+    def _timezone_name_from_offset(seconds: int) -> str:
+        seconds = int(seconds)
+        if seconds == 0:
+            return "GMT"
+        sign = "+" if seconds > 0 else "-"
+        seconds = abs(seconds)
+        hours, remainder = divmod(seconds, 3600)
+        minutes = remainder // 60
+        return f"GMT{sign}{hours:02d}:{minutes:02d}"
+
+    @staticmethod
+    def _bool_to_ig_string(value: bool) -> str:
+        return "true" if bool(value) else "false"
+
+    def set_timezone_name(self, timezone_name: str = ""):
+        """Set your timezone name for request metadata."""
+        self.settings["timezone_name"] = self.timezone_name = str(timezone_name)
+        return True
+
+    def set_timezone_offset(self, seconds: int = 0, timezone_name=None):
         """Set you timezone offset in seconds
 
         Parameters
@@ -283,6 +387,14 @@ class PrivateRequestMixin:
             A boolean value
         """
         self.settings["timezone_offset"] = self.timezone_offset = int(seconds)
+        self.set_timezone_name(
+            self._timezone_name_from_offset(self.timezone_offset) if timezone_name is None else timezone_name
+        )
+        return True
+
+    def set_push_disabled(self, disabled: bool = True):
+        """Configure whether request metadata reports push as disabled."""
+        self.settings["push_disabled"] = self.push_disabled = bool(disabled)
         return True
 
     def set_ig_u_rur(self, value):
@@ -311,8 +423,13 @@ class PrivateRequestMixin:
         self.last_response = None
         self.last_json = last_json = {}  # for Sentry context in traceback
         self.private.headers.update(self.base_headers)
-        if headers:
-            self.private.headers.update(headers)
+        # Per-request overrides (caller headers such as X-FB-Friendly-Name, and the
+        # Host override used for domain routing) must not be merged into the
+        # persistent session headers: doing so leaks e.g. a Bloks async-action
+        # friendly name onto every later unrelated request. Send them per-request.
+        request_headers = dict(headers) if headers else {}
+        if domain:
+            request_headers["Host"] = domain
         if not login:
             time.sleep(self.request_timeout)
         # if self.user_id and login:
@@ -329,21 +446,26 @@ class PrivateRequestMixin:
             if data:  # POST
                 # Client.direct_answer raw dict
                 # data = json.dumps(data)
-                self.private.headers[
-                    "Content-Type"
-                ] = "application/x-www-form-urlencoded; charset=UTF-8"
+                self.private.headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
                 if with_signature:
                     # Client.direct_answer doesn't need a signature
                     data = generate_signature(dumps(data))
                     if extra_sig:
                         data += "&".join(extra_sig)
                 response = self.private.post(
-                    api_url, data=data, params=params, proxies=self.private.proxies
+                    api_url,
+                    data=data,
+                    params=params,
+                    headers=request_headers or None,
+                    proxies=self.private.proxies,
                 )
             else:  # GET
                 self.private.headers.pop("Content-Type", None)
                 response = self.private.get(
-                    api_url, params=params, proxies=self.private.proxies
+                    api_url,
+                    params=params,
+                    headers=request_headers or None,
+                    proxies=self.private.proxies,
                 )
             self.logger.debug(
                 "private_request %s: %s (%s)",
@@ -366,7 +488,7 @@ class PrivateRequestMixin:
                 response.status_code,
                 self.user_id,
                 endpoint,
-                response.text,
+                truncate_log_text(response.text),
             )
             raise ClientJSONDecodeError(
                 "JSONDecodeError {0!s} while opening {1!s}".format(e, response.url),
@@ -375,7 +497,7 @@ class PrivateRequestMixin:
         except requests.HTTPError as e:
             try:
                 self.last_json = last_json = response.json()
-            except JSONDecodeError:
+            except ValueError:
                 pass
             message = last_json.get("message", "")
             if "Please wait a few minutes" in message:
@@ -391,20 +513,23 @@ class PrivateRequestMixin:
                 if last_json.get("two_factor_info"):
                     if not last_json.get("message"):
                         last_json["message"] = "Two-factor authentication required"
-                    if last_json.get("error_type") != "two_factor_required":
-                        self.logger.info(
-                            f"Changing error_type from {last_json.get('error_type')} to two_factor_required due to presence of two_factor_info"
-                        )
+                        if last_json.get("error_type") != "two_factor_required":
+                            self.logger.info(
+                                "Changing error_type from %s to two_factor_required due to presence of two_factor_info",
+                                last_json.get("error_type"),
+                            )
                         last_json["error_type"] = "two_factor_required"
                     raise TwoFactorRequired(**last_json)
                 elif message == "challenge_required":
+                    challenge = last_json.get("challenge") or {}
+                    if "/suspended/" in (challenge.get("url") or ""):
+                        raise AccountSuspended(**last_json)
                     raise ChallengeRequired(**last_json)
                 elif message == "feedback_required":
                     raise FeedbackRequired(
                         **dict(
                             last_json,
-                            message="%s: %s"
-                            % (message, last_json.get("feedback_message")),
+                            message="%s: %s" % (message, last_json.get("feedback_message")),
                         )
                     )
                 elif error_type == "sentry_block":
@@ -412,20 +537,25 @@ class PrivateRequestMixin:
                 elif error_type == "rate_limit_error":
                     raise RateLimitError(**last_json)
                 elif error_type == "bad_password":
-                    msg = last_json.get("message", "").strip()
-                    if msg:
-                        if not msg.endswith("."):
-                            msg = "%s." % msg
-                        msg = "%s " % msg
-                    last_json["message"] = (
-                        "%sIf you are sure that the password is correct, then change your IP address, "
-                        "because it is added to the blacklist of the Instagram Server"
-                    ) % msg
+                    last_json["message"] = " ".join(
+                        part
+                        for part in (
+                            last_json.get("message") or "Instagram rejected the login credentials.",
+                            _LOGIN_CONTEXT_REJECTION_HINT,
+                        )
+                        if part
+                    )
                     raise BadPassword(**last_json)
                 elif error_type == "two_factor_required":
                     if not last_json["message"]:
                         last_json["message"] = "Two-factor authentication required"
                     raise TwoFactorRequired(**last_json)
+                elif _is_account_contact_point_required(endpoint, message):
+                    raise AccountContactPointRequired(e, response=e.response, **last_json)
+                elif _is_account_edit_error(endpoint):
+                    raise AccountEditError(e, response=e.response, **last_json)
+                elif _is_direct_message_requests_disabled(endpoint, message):
+                    raise DirectMessageRequestsDisabled(e, response=e.response, **last_json)
                 elif "VideoTooLongException" in message:
                     raise VideoTooLongException(e, response=e.response, **last_json)
                 elif "Not authorized to view user" in message:
@@ -434,10 +564,7 @@ class PrivateRequestMixin:
                     raise InvalidTargetUser(e, response=e.response, **last_json)
                 elif "Invalid media_id" in message:
                     raise InvalidMediaId(e, response=e.response, **last_json)
-                elif (
-                    "Media is unavailable" in message
-                    or "Media not found or unavailable" in message
-                ):
+                elif "Media is unavailable" in message or "Media not found or unavailable" in message:
                     raise MediaUnavailable(e, response=e.response, **last_json)
                 elif "has been deleted" in message:
                     # Sorry, this photo has been deleted.
@@ -449,8 +576,7 @@ class PrivateRequestMixin:
                     # The username you entered doesn't appear to belong to an account.
                     # Please check your username and try again.
                     last_json["message"] = (
-                        "Instagram has blocked your IP address, "
-                        "use a quality proxy provider (not free, not shared)"
+                        "Instagram has blocked your IP address, use a quality proxy provider (not free, not shared)"
                     )
                     raise ProxyAddressIsBlocked(**last_json)
                 elif error_type or message:
@@ -465,16 +591,36 @@ class PrivateRequestMixin:
             elif e.response.status_code == 429:
                 self.logger.warning("Status 429: Too many requests")
                 raise ClientThrottledError(e, response=e.response, **last_json)
+            elif e.response.status_code == 401:
+                self.logger.warning("Status 401: Unauthorized %s", endpoint)
+                raise ClientUnauthorizedError(e, response=e.response, **last_json)
             elif e.response.status_code == 404:
+                if e.response.content == b"Not Found":
+                    # Masked challenge (often on /media/.../comments/) — IG
+                    # returns the bare body "Not Found" instead of a JSON
+                    # challenge envelope. Surface it as ChallengeRequired so
+                    # callers can resolve it instead of treating the resource
+                    # as missing.
+                    self.logger.warning("Status 404 (masked challenge): %s", endpoint)
+                    raise ChallengeRequired(**last_json)
                 self.logger.warning("Status 404: Endpoint %s does not exist", endpoint)
                 raise ClientNotFoundError(e, response=e.response, **last_json)
             elif e.response.status_code == 408:
                 self.logger.warning("Status 408: Request Timeout")
                 raise ClientRequestTimeout(e, response=e.response, **last_json)
             raise ClientError(e, response=e.response, **last_json)
+        except requests.exceptions.ChunkedEncodingError as e:
+            raise ClientIncompleteReadError("{} {}".format(e.__class__.__name__, str(e))) from e
         except requests.ConnectionError as e:
             raise ClientConnectionError("{e.__class__.__name__} {e}".format(e=e))
         if last_json.get("status") == "fail":
+            message = last_json.get("message", "")
+            if _is_account_contact_point_required(endpoint, message):
+                raise AccountContactPointRequired(response=response, **last_json)
+            if _is_account_edit_error(endpoint):
+                raise AccountEditError(response=response, **last_json)
+            if _is_direct_message_requests_disabled(endpoint, message):
+                raise DirectMessageRequestsDisabled(response=response, **last_json)
             raise ClientError(response=response, **last_json)
         elif "error_title" in last_json:
             """Example: {
@@ -534,10 +680,12 @@ class PrivateRequestMixin:
             self.private_requests_count += 1
             self._send_private_request(endpoint, **kwargs)
         except ClientRequestTimeout:
-            self.logger.info(
-                "Wait 60 seconds and try one more time (ClientRequestTimeout)"
-            )
+            self.logger.info("Wait 60 seconds and try one more time (ClientRequestTimeout)")
             time.sleep(60)
+            return self._send_private_request(endpoint, **kwargs)
+        except ClientIncompleteReadError:
+            self.logger.info("Wait 2 seconds and try one more time (ClientIncompleteReadError)")
+            time.sleep(2)
             return self._send_private_request(endpoint, **kwargs)
         # except BadPassword as e:
         #     raise e

@@ -2,7 +2,7 @@
 
 | Method                                                                 | Return          | Description
 | ---------------------------------------------------------------------- | --------------- | ----------------------------------
-| user_stories(user_id: str, amount: int = None)                         | List[Story]     | Get list of stories by user_id
+| user_stories(user_id: str, amount: int = None)                         | List[Story]     | Get list of stories by user_id; public/web first, private fallback when authenticated
 | story_info(story_pk: int, use_cache: bool = True)                      | Story           | Return story info
 | story_delete(story_pk: int)                                            | bool            | Delete story
 | story_seen(story_pks: List[int], skipped_story_pks: List[int])         | bool            | Mark a story as seen
@@ -10,8 +10,12 @@
 | story_download(story_pk: int, filename: str = "", folder: Path = "")   | Path            | Download story media by media_type
 | story_download_by_url(url: str, filename: str = "", folder: Path = "") | Path            | Download story media using URL to file (mp4 or jpg)
 | story_viewers(story_pk: int, amount: int = 20)                         | List[UserShort] | List of story viewers (via Private API)
-| story_like(story_id: str, revert: bool = False)                        | bool            | Like a story
+| story_likers(story_pk: int, amount: int = 0)                           | List[UserShort] | List of story likers (via Private API)
+| archive_story_days(amount: int = 0, include_memories: bool = True)      | List[StoryArchiveDay] | Get your story archive day shells
+| archive_stories(amount: int = 0)                                        | List[Story]     | Get your archived stories
+| story_like(story_id: str, revert: bool = False, mark_seen: bool = True) | bool            | Like a story
 | story_unlike(story_id: str)                                            | bool            | Unlike a story
+| story_poll_vote(story_id: str, poll_id: str, vote: int)                | bool            | Vote in a story poll by option index
 
 Example:
 
@@ -26,7 +30,31 @@ PosixPath('/app/189361307_229642088942817_9180243596650100310_n.mp4')
 
 >>> cl.story_download_by_url(s.thumbnail_url)  # URL to jpg file
 PosixPath('/app/191260083_2908005872746895_8988438451809588865_n.jpg')
+
+>>> days = cl.archive_story_days(amount=1)
+>>> days[0].id
+'archiveDay:1710000000000'
+
+>>> archived = cl.archive_stories(amount=5)
+>>> [story.pk for story in archived]
+['3155832952940083788']
+
+>>> story = cl.user_stories(USER_ID, amount=1)[0]
+>>> cl.story_poll_vote(story.id, story.polls[0].id, 0)  # vote for the first option
+True
 ```
+
+## Story Archive
+
+`archive_story_days()` returns `StoryArchiveDay` objects for the logged-in account's story archive. Use `archive_stories()` when you need the story media items from those archive days.
+
+Low level methods:
+
+| Method | Return | Description
+| ------ | ------ | -----------
+| archive_story_days_v1(amount: int = 0, include_memories: bool = True) | List[StoryArchiveDay] | Get story archive days via private mobile API
+| archive_story_days_paginated_v1(amount: int = 0, end_cursor: str = "", include_memories: bool = True, reel_id: str = "") | Tuple[List[StoryArchiveDay], str] | Get one private API page of story archive days
+| archive_stories_v1(amount: int = 0) | List[Story] | Get archived stories via private mobile API
 
 ## Upload Stories
 
@@ -38,19 +66,25 @@ If you have a different resolution, then you need to prepare a file or use the S
 Common arguments:
 
 * `path` - Path to media file
-* `caption` - Caption for story (now use to fetch mentions)
+* `caption` - Optional caption text
 * `thumbnail` - Thumbnail instead capture from source file
 * `mentions` - Tag profiles in story
 * `locations` - Add locations to story
-* `links` - "Swipe Up" links (now use first)
+* `links` - Story link stickers (Instagram currently uses the first link only)
 * `hashtags` - Add hashtags to story
 * `stickers` - Add stickers to story
+* `medias` - Reshared feed media stickers
 * `polls` - Add polls to story
+* `resize_mode` - Story media sizing mode. Exposed as `StoryResizeMode = Literal["fill", "fit"]`; `"fill"` keeps the current crop/fill behavior, `"fit"` renders the full source media on a Story canvas without cropping
 
 | Method                               | Return   | Description
 | ------------------------------------ | -------- | -------------
-| photo_upload_to_story(path: Path, caption: str, upload_id: str, mentions: List[Usertag], locations: List[StoryLocation], links: List[StoryLink], hashtags: List[StoryHashtag], stickers: List[StorySticker], polls: List[StoryPoll], extra_data: Dict[str, str] = {})  | Story  | Upload photo (Support JPG files)
-| video_upload_to_story(path: Path, caption: str, thumbnail: Path, mentions: List[Usertag], locations: List[StoryLocation], links: List[StoryLink], hashtags: List[StoryHashtag], stickers: List[StorySticker], polls: List[StoryPoll], extra_data: Dict[str, str] = {}) | Story  | Upload video (Support MP4 files)
+| photo_upload_to_story(path: Path, caption: str = "", upload_id: str = "", mentions: List[StoryMention] = [], locations: List[StoryLocation] = [], links: List[StoryLink] = [], hashtags: List[StoryHashtag] = [], stickers: List[StorySticker] = [], medias: List[StoryMedia] = [], polls: List[StoryPoll] = [], extra_data: Dict[str, str] = {}, resize_mode: StoryResizeMode = "fill")  | Story  | Upload photo to story
+| video_upload_to_story(path: Path, caption: str = "", thumbnail: Path = None, mentions: List[StoryMention] = [], locations: List[StoryLocation] = [], links: List[StoryLink] = [], hashtags: List[StoryHashtag] = [], stickers: List[StorySticker] = [], medias: List[StoryMedia] = [], polls: List[StoryPoll] = [], extra_data: Dict[str, str] = {}, resize_mode: StoryResizeMode = "fill") | Story  | Upload video to story
+| media_share_to_story(media_id: str, background: Path = None, caption: str = "") | Story | Share an existing post to your story with a generated or provided background
+| photo_upload_to_story_with_music(path: Path, caption: str, track: Track or dict, thumbnail: Path = None, duration: float = 15.0, extra_data: Dict = {}) | Story | Upload photo to story as a short video with the selected music track muxed into it
+| video_upload_to_story_with_music(path: Path, caption: str, track: Track or dict, thumbnail: Path = None, extra_data: Dict = {}) | Story | Upload video to story with the selected music track muxed into it
+| story_music_extra_data(track: Track or dict, extra_data: Dict = {}) | dict | Build Story music configure fields for manual story upload `extra_data`
 
 In `extra_data`, you can pass additional story settings, for example:
 
@@ -58,12 +92,23 @@ In `extra_data`, you can pass additional story settings, for example:
 | ----------------- | ------ | ------------------
 | audience          | String | [Publish story for close friends](https://github.com/subzeroid/instagrapi/issues/1210) `{"audience": "besties"}`
 
+Notes:
+
+* `links`, `hashtags`, `locations`, `stickers`, `medias`, and `polls` are all part of the story sticker payload.
+* `media_share_to_story()` is a convenience wrapper for the feed media sticker flow. It uploads a generated black 9:16 background unless you pass your own `background`.
+* Link stickers are supported through `StoryLink`; this is no longer the old Instagram "swipe up" flow.
+* For story uploads, use a 9:16 asset, pass `resize_mode="fit"` to keep the full source media visible on a Story canvas, or build one manually with `StoryBuilder`.
+* Android users should pass `thumbnail=...` for video stories or install the optional video dependencies, MoviePy `2.2.1`, and executable ffmpeg. See [Pydroid and ffmpeg](pydroid.md) and [Termux](termux.md).
+* Story music helpers require the optional video dependencies, MoviePy `2.2.1`, and executable ffmpeg because they render a local MP4 before upload.
+* Story music helpers add Story music metadata and bake the selected track into the uploaded media. They do not expose Instagram's native interactive lyrics/music sticker UI.
+* Anonymous public story fetch is not guaranteed. If the public/web story path fails, reliable story retrieval usually requires an authenticated session.
+
 
 Examples:
 
 ``` python
 from instagrapi import Client
-from instagrapi.types import StoryMention, StoryMedia, StoryLink, StoryHashtag
+from instagrapi.types import StoryMention, StoryMedia, StoryLink, StoryHashtag, StoryPoll
 
 cl = Client()
 cl.login(USERNAME, PASSWORD)
@@ -82,16 +127,62 @@ cl.video_upload_to_story(
     medias=[StoryMedia(media_pk=media_pk, x=0.5, y=0.5, width=0.6, height=0.8)],
     polls=[StoryPoll(x = 0.5, y = 0.5, width = 0.7, height = 0.5, question = "Question", options = ["Option 1", "Option 2", "Option 3"])],
 )
+
+cl.media_share_to_story(media_pk, caption="Shared to story")
+```
+
+Fit a landscape photo or video into a Story without cropping:
+
+``` python
+cl.photo_upload_to_story(Path("/app/landscape.jpg"), resize_mode="fit")
+cl.video_upload_to_story(Path("/app/landscape.mp4"), resize_mode="fit")
+```
+
+## Upload Story with Music
+
+Story music upload works by rendering an MP4 locally and then publishing it with the normal story upload flow.
+
+```bash
+pip install "instagrapi[video]"
+pip install --no-deps "moviepy==2.2.1"
+```
+
+``` python
+from pathlib import Path
+
+track = cl.search_music("song name")[0]
+
+cl.video_upload_to_story_with_music(
+    Path("/app/story.mp4"),
+    "Credits @example",
+    track,
+    thumbnail=Path("/app/story-thumb.jpg"),
+)
+
+cl.photo_upload_to_story_with_music(
+    Path("/app/story.jpg"),
+    "Credits @example",
+    track,
+    duration=7,
+)
 ```
 
 ## Build Story to Upload
 
-If you want to format your story correctly (correct resolution, user mentions, etc) use StoryBuilder:
+If you want to format your story correctly (correct resolution, user mentions, etc) use StoryBuilder. StoryBuilder renders media with MoviePy and ffmpeg, so install the optional video dependencies first:
+
+```bash
+pip install "instagrapi[video]"
+pip install --no-deps "moviepy==2.2.1"
+```
+
+MoviePy `2.2.1` currently declares `Pillow<12`, but instagrapi keeps `Pillow>=12.2.0` for security fixes; the `--no-deps` install keeps the safe Pillow version. Older MoviePy `1.x` imports such as `moviepy.editor` and clip methods such as `set_duration`, `set_position`, `resize`, and `subclip` are not supported by instagrapi's video helpers.
 
 | Method                                                | Return     | Description                              |
 | ----------------------------------------------------- | ---------- | ---------------------------------------- |
 | StoryBuilder.build_clip(clip: moviepy.Clip, max_duration: int = 0) | StoryBuild | Build CompositeVideoClip with background and mentioned users. Return MP4 file and mentions with coordinates |
 | StoryBuilder.video(max_duration: int = 0)            | StoryBuild | Call build_clip(VideoClip, max_duration) |
+| StoryBuilder.video_fit(max_duration: int = 0)        | StoryBuild | Build a 720x1280 Story video canvas that fits the full source video without cropping |
 | StoryBuilder.photo(max_duration: int = 0)            | StoryBuild | Call build_clip(ImageClip, max_duration) |
 
 Example:

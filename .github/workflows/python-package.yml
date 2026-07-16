@@ -16,93 +16,103 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
         with:
-          test-requirements: "true"
+          test: "true"
 
       - name: Run bandit
-        run: bandit --ini .bandit -r instagrapi
+        run: bandit -c pyproject.toml -r instagrapi
 
-  flake8:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
         with:
-          test-requirements: "true"
+          test: "true"
 
-      - name: Run flake8
+      - name: Run Ruff
         run: |
-          # stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-          flake8 . --count --exit-zero --statistics
-  isort:
+          ruff check --output-format=github .
+          ruff format --check .
+
+  minimum-runtime-dependencies:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install dependencies
-        uses: ./.github/actions/install-dependencies
-        with:
-          requirements: "true"
-          test-requirements: "true"
+      - name: Install package with minimum runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "requests==2.34.2" \
+            "PySocks==1.7.1" \
+            "pydantic==2.12.5" \
+            "Pillow==12.2.0" \
+            "pycryptodomex==3.23.0"
+          python -m pip install .
+          python -m pip check
+          python - <<'PY'
+          from instagrapi import Client
 
-      - name: Run isort
-        run: isort --check-only instagrapi
+          Client()
+          PY
 
-  test:
+  test-compat:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [ "3.13.5" ]
-    env:
-      TEST_ACCOUNTS_URL: ${{ secrets.TEST_ACCOUNTS_URL }}
+        python-version: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
         with:
-          requirements: "true"
-          test-requirements: "true"
-      - name: Run media test
-        run: pytest -sv tests.py::ClientMediaTestCase
-      - name: Run user test
-        run: pytest -sv tests.py::ClientUserTestCase
-      # - name: Run comment test
-      #   run: pytest -sv tests.py::ClientCommentTestCase
-      # - name: Run location test
-      #   run: pytest -sv tests.py::ClientLocationTestCase
-      # - name: Run hashtag test
-      #   run: pytest -sv tests.py::ClientHashtagTestCase
-      # - name: Run share test
-      #   run: pytest -sv tests.py::ClientShareTestCase
-      # - name: Run highlight test
-      #   run: pytest -sv tests.py::ClientHighlightTestCase
+          test: "true"
+      - name: Run compatibility smoke tests
+        run: |
+          pytest -sv \
+            tests/regression/test_extractors.py::ExtractorsRegressionTestCase \
+            tests/regression/test_public.py::PublicRegressionTestCase \
+            tests/regression/test_public.py::PrivateGraphQLRequestRegressionTestCase \
+            tests/regression/test_direct.py::DirectMixinRegressionTestCase \
+            tests/regression/test_challenge.py::ChallengeRegressionTestCase \
+            tests/regression/test_comments.py::CommentRepliesRegressionTestCase \
+            tests/regression/test_current_app_profile.py::CurrentAppProfileRegressionTestCase \
+            tests/regression/test_auth_story.py::AuthAndStoryRegressionTestCase \
+            tests/regression/test_download.py::DownloadRegressionTestCase \
+            tests/regression/test_notes.py::NoteMixinRegressionTestCase \
+            tests/regression/test_location.py::LocationMixinRegressionTestCase \
+            tests/regression/test_media.py::UserMediasGraphQLRegressionTestCase \
+            tests/regression/test_user.py::UserMixinRegressionTestCase \
+            tests/regression/test_timeline.py::TimelineRegressionTestCase \
+            tests/regression/test_story_configure.py::StoryConfigureRegressionTestCase \
+            tests/regression/test_video_metadata.py::VideoMetadataRegressionTestCase \
+            tests/regression/test_upload.py::UploadRegressionTestCase
 
   build-docs:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -111,16 +121,14 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
         with:
-          requirements: "true"
-          test-requirements: "true"
-          docs-requirements: "true"
+          test: "true"
 
       - name: Build Docs
         run: mkdocs build --strict
 
       # upload artifact for dev build
       - name: Upload coverage results artifact
-        if: github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/master'
         uses: actions/upload-artifact@v7
         with:
           name: docs-site
@@ -128,10 +136,10 @@ jobs:
 
   update-dev-docs:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: Check out code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -140,9 +148,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
         with:
-          requirements: "true"
-          test-requirements: "true"
-          docs-requirements: "true"
+          test: "true"
 
       - name: Push documentation changes
         uses: ./.github/actions/publish-docs-with-mike

@@ -5,6 +5,8 @@ Viewing location info and medias by location
 | Method                                                     | Return         | Description
 | ---------------------------------------------------------- | -------------- | ----------------------------------------------------
 | location_search(lat: float, lng: float)                    | List[Location] | Search Location by GEO coordinates
+| location_search_name(name: str)                            | List[Location] | Search Location by name
+| location_search_pk(location_pk: int)                       | Location       | Resolve a Location by exact pk using search results
 | location_complete(location: Location)                      | Location       | Complete blank fields
 | location_build(location: Location)                         | String         | Serialized JSON
 | location_info(location_pk: int)                            | Location       | Return Location info (pk, name, address, lng, lat, external_id, external_id_source)
@@ -43,6 +45,13 @@ Example:
 
 >>> cl.location_build(location)
 '{"name":"Russia, Saint-Petersburg","address":"Russia, Saint-Petersburg","lat":59.93318,"lng":30.30605,"external_source":"facebook_places","facebook_places_id":107617247320879}'
+
+>>> places = cl.location_search_name("Times Square")
+>>> places[0].dict()
+{'pk': 6889842, 'name': 'Times Square', ...}
+
+>>> cl.location_search_pk(places[0].pk).dict()
+{'pk': 6889842, 'name': 'Times Square', ...}
 
 >>> location = cl.location_info(107617247320879)
 >>> location.dict()
@@ -205,13 +214,8 @@ Low level methods:
 
 | Method                                         | Return  | Description
 | ---------------------------------------------- | ------- | --------------------------------------------
-| location_info_a1(location_pk: int) | Location | Get a location using location pk (Public Web API)
 | location_info_v1(location_pk: int) | Location | Get a location using location pk (Private Mobile API)
-| location_medias_a1_chunk(location_pk: int, max_amount: int = 24, sleep: float = 0.5, tab_key: str = "edge_location_to_top_posts\|edge_location_to_media", max_id: str = None) | Tuple[List[Media], str] | Get chunk of medias and end_cursor (Public Web API)
-| location_medias_a1(location_pk: int, amount: int = 24, sleep: float = 0.5, tab_key: str = "edge_location_to_top_posts\|edge_location_to_media") | List[Media] | Get medias for a location (Public Web API)
-| location_medias_v1_chunk(location_pk: int, max_amount: int = 63, tab_key: str = "ranked\|recent", max_id: str = None) | Tuple[List[Media], str] Get chunk of medias for a location and max_id (cursor) by Private Mobile API
-| location_medias_v1(location_pk: int, amount: int = 63, tab_key: str = "ranked\|recent") | List[Media] | Get medias for a location (Private Mobile API)
-| location_medias_top_a1(location_pk: int, amount: int = 9, sleep: float = 0.5) | List[Media] | Get top medias for a location (Public Web API)
+| location_medias_v1_chunk(location_pk: int, max_amount: int = 63, tab_key: Literal["ranked", "recent"] = "ranked", max_id: str = None) | Tuple[List[Media], str] Get chunk of medias for a location and max_id (cursor) by Private Mobile API
+| location_medias_v1(location_pk: int, amount: int = 63, tab_key: Literal["ranked", "recent"] = "ranked") | List[Media] | Get medias for a location (Private Mobile API), paginating with the server cursor until `amount` is reached or the cursor is exhausted
 | location_medias_top_v1(location_pk: int, amount: int = 21) | List[Media] | Get top medias for a location (Private Mobile API)
-| location_medias_recent_a1(location_pk: int, amount: int = 24, sleep: float = 0.5) | List[Media] | Get recent medias for a location (Public Web API)
-| location_medias_recent_v1(location_pk: int, amount: int = 63) | List[Media] | Get recent medias for a location (Private Mobile API)
+| location_medias_recent_v1(location_pk: int, amount: int = 63) | List[Media] | Get recent medias for a location (Private Mobile API), paginating past the first chunk when the endpoint returns `next_max_id`

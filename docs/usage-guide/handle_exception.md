@@ -1,61 +1,56 @@
 You can handle any exceptions using a generic handler:
 
 ``` python
+import json
+import logging
+
 from instagrapi import Client
 from instagrapi.exceptions import (
     BadPassword, ReloginAttemptExceeded, ChallengeRequired,
     SelectContactPointRecoveryForm, RecaptchaChallengeForm,
-    FeedbackRequired, PleaseWaitFewMinutes, LoginRequired
+    FeedbackRequired, PleaseWaitFewMinutes, LoginRequired,
+    ClientThrottledError, DirectMessageRequestsDisabled,
 )
+from instagrapi.utils import json_value
 
+logger = logging.getLogger(__name__)
 
-def handle_exception(client, e):
+def handle_exception(client: Client, e: Exception):
     if isinstance(e, BadPassword):
         client.logger.exception(e)
-        client.set_proxy(self.next_proxy().href)
         if client.relogin_attempt > 0:
-            self.freeze(str(e), days=7)
             raise ReloginAttemptExceeded(e)
-        client.settings = self.rebuild_client_settings()
-        return self.update_client_settings(client.get_settings())
+        raise e
     elif isinstance(e, LoginRequired):
         client.logger.exception(e)
         client.relogin()
-        return self.update_client_settings(client.get_settings())
+        return True
     elif isinstance(e, ChallengeRequired):
         api_path = json_value(client.last_json, "challenge", "api_path")
         if api_path == "/challenge/":
-            client.set_proxy(self.next_proxy().href)
-            client.settings = self.rebuild_client_settings()
+            logger.warning("Generic challenge flow requires manual handling or a custom resolver")
         else:
             try:
                 client.challenge_resolve(client.last_json)
             except ChallengeRequired as e:
-                self.freeze('Manual Challenge Required', days=2)
                 raise e
             except (ChallengeRequired, SelectContactPointRecoveryForm, RecaptchaChallengeForm) as e:
-                self.freeze(str(e), days=4)
                 raise e
-            self.update_client_settings(client.get_settings())
         return True
     elif isinstance(e, FeedbackRequired):
-        message = client.last_json["feedback_message"]
+        message = client.last_json.get("feedback_message", "")
         if "This action was blocked. Please try again later" in message:
-            self.freeze(message, hours=12)
-            # client.settings = self.rebuild_client_settings()
-            # return self.update_client_settings(client.get_settings())
+            logger.warning("Action blocked by Instagram: %s", message)
         elif "We restrict certain activity to protect our community" in message:
-            # 6 hours is not enough
-            self.freeze(message, hours=12)
+            logger.warning("Temporary activity restriction: %s", message)
         elif "Your account has been temporarily blocked" in message:
-            """
-            Based on previous use of this feature, your account has been temporarily
-            blocked from taking this action.
-            This block will expire on 2020-03-27.
-            """
-            self.freeze(message)
+            logger.warning("Temporary account block: %s", message)
+    elif isinstance(e, ClientThrottledError):
+        logger.warning("HTTP 429 from Instagram, back off and review proxy/account pressure")
     elif isinstance(e, PleaseWaitFewMinutes):
-        self.freeze(str(e), hours=1)
+        logger.warning("Please wait before retrying: %s", e)
+    elif isinstance(e, DirectMessageRequestsDisabled):
+        logger.warning("Recipient does not accept new Direct message requests: %s", e)
     raise e
 
 cl = Client()
@@ -63,6 +58,10 @@ cl.handle_exception = handle_exception
 cl.login(USERNAME, PASSWORD)
 ```
 
-In this way, you can centrally handle errors and not repeat handlers throughout your code.
+In this way, you can centrally handle errors and not repeat handlers throughout your code. In a real application, you would usually extend this with your own proxy rotation, account freeze/backoff storage, or metrics hooks.
+
+For `BadPassword` with a password that works elsewhere, see the [`BadPassword` troubleshooting guide](https://instagrapi.com/guides/errors/bad-password/). Instagram can return `bad_password` for risky proxy/IP/device/session states, so avoid retry loops and first compare against the official app on the same network identity.
+
+For a practical playbook around `429`, `feedback_required`, `PleaseWaitFewMinutes`, and session/challenge handling, see [Best Practices](best-practices.md).
 
 Full example [here](https://github.com/subzeroid/instagrapi/blob/master/examples/handle_exception.py)

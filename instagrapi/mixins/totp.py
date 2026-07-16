@@ -33,9 +33,7 @@ class TOTP:
         """
         if input < 0:
             raise ValueError("input must be positive integer")
-        hasher = hmac.new(
-            self.byte_secret(), self.int_to_bytestring(input), self.digest
-        )
+        hasher = hmac.new(self.byte_secret(), self.int_to_bytestring(input), self.digest)
         hmac_hash = bytearray(hasher.digest())
         offset = hmac_hash[-1] & 0xF
         code = (
@@ -91,9 +89,7 @@ class TOTPMixin:
         str
             TOTP seed (also known as "token" and "secret key")
         """
-        result = self.private_request(
-            "accounts/generate_two_factor_totp_key/", data=self.with_default_data({})
-        )
+        result = self.private_request("accounts/generate_two_factor_totp_key/", data=self.with_default_data({}))
         return result["totp_seed"]
 
     def totp_enable(self, verification_code: str) -> List[str]:
@@ -124,12 +120,11 @@ class TOTPMixin:
         -------
         bool
         """
-        result = self.private_request(
-            "accounts/disable_totp_two_factor/", data=self.with_default_data({})
-        )
+        result = self.private_request("accounts/disable_totp_two_factor/", data=self.with_default_data({}))
         return result["status"] == "ok"
 
-    def totp_generate_code(self, seed: str) -> str:
+    @staticmethod
+    def totp_generate_code(seed: str) -> str:
         """
         Generate 2FA TOTP code
 

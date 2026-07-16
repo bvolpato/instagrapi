@@ -1,4 +1,3 @@
-import contextlib
 import json
 import random
 import time
@@ -8,9 +7,9 @@ from uuid import uuid4
 
 from instagrapi import config
 from instagrapi.exceptions import ClientError, IGTVConfigureError, IGTVNotUpload
-from instagrapi.extractors import extract_media_v1
 from instagrapi.types import Location, Media, Usertag
-from instagrapi.utils import date_time_original
+from instagrapi.utils.timing import date_time_original
+from instagrapi.utils.video import analyze_video_for_upload
 
 try:
     from PIL import Image
@@ -41,9 +40,7 @@ class DownloadIGTVMixin:
         """
         return self.video_download(media_pk, folder)
 
-    def igtv_download_by_url(
-        self, url: str, filename: str = "", folder: Path = ""
-    ) -> str:
+    def igtv_download_by_url(self, url: str, filename: str = "", folder: Path = "") -> str:
         """
         Download IGTV video using URL
 
@@ -112,9 +109,7 @@ class UploadIGTVMixin:
         thumbnail, width, height, duration = analyze_video(path, thumbnail)
         waterfall_id = str(uuid4())
         # upload_name example: '1576102477530_0_7823256191'
-        upload_name = "{upload_id}_0_{rand}".format(
-            upload_id=upload_id, rand=random.randint(1000000000, 9999999999)
-        )
+        upload_name = "{upload_id}_0_{rand}".format(upload_id=upload_id, rand=random.randint(1000000000, 9999999999))
         # by segments bb2c1d0c127384453a2122e79e4c9a85-0-6498763
         # upload_name = "{hash}-0-{rand}".format(
         #     hash="bb2c1d0c127384453a2122e79e4c9a85", rand=random.randint(1111111, 9999999)
@@ -136,9 +131,7 @@ class UploadIGTVMixin:
             "X-Entity-Type": "video/mp4",
         }
         response = self.private.get(
-            "https://{domain}/rupload_igvideo/{name}".format(
-                domain=config.API_DOMAIN, name=upload_name
-            ),
+            "https://{domain}/rupload_igvideo/{name}".format(domain=config.API_DOMAIN, name=upload_name),
             headers=headers,
         )
         self.request_log(response)
@@ -156,9 +149,7 @@ class UploadIGTVMixin:
             **headers,
         }
         response = self.private.post(
-            "https://{domain}/rupload_igvideo/{name}".format(
-                domain=config.API_DOMAIN, name=upload_name
-            ),
+            "https://{domain}/rupload_igvideo/{name}".format(domain=config.API_DOMAIN, name=upload_name),
             data=igtv_data,
             headers=headers,
         )
@@ -194,9 +185,12 @@ class UploadIGTVMixin:
                 raise e
             else:
                 if configured:
-                    media = self.last_json.get("media")
                     self.expose()
-                    return extract_media_v1(media)
+                    return self._extract_configured_media_or_raise(
+                        configured,
+                        IGTVConfigureError,
+                        "IGTV upload",
+                    )
         raise IGTVConfigureError(response=self.last_response, **self.last_json)
 
     def igtv_configure(
@@ -244,9 +238,7 @@ class UploadIGTVMixin:
             A dictionary of response from the call
         """
         self.photo_rupload(Path(thumbnail), upload_id)
-        usertags = [
-            {"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in usertags
-        ]
+        usertags = [{"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in usertags]
         data = {
             "igtv_ads_toggled_on": "0",
             "filter_type": "0",
@@ -292,25 +284,7 @@ def analyze_video(path: Path, thumbnail: Path = None) -> tuple:
     Tuple
         A tuple with (thumbail path, width, height, duration)
     """
-    try:
-        import moviepy.editor as mp
-    except ImportError:
-        try:
-            import moviepy as mp
-        except ImportError:
-            raise Exception("Please install moviepy>=1.0.3 and retry")
-
-    print(f'Analyzing IGTV file "{path}"')
-    with contextlib.ExitStack() as stack:
-        video = mp.VideoFileClip(str(path))
-        width, height = video.size
-        if not thumbnail:
-            thumbnail = f"{path}.jpg"
-            print(f'Generating thumbnail "{thumbnail}"...')
-            video.save_frame(thumbnail, t=(video.duration / 2))
-            crop_thumbnail(thumbnail)
-        stack.enter_context(contextlib.closing(video))
-    return thumbnail, width, height, video.duration
+    return analyze_video_for_upload(path, thumbnail, label="IGTV", crop_thumbnail=crop_thumbnail)
 
 
 def crop_thumbnail(path: Path) -> bool:
@@ -327,13 +301,15 @@ def crop_thumbnail(path: Path) -> bool:
     bool
         A boolean value
     """
-    im = Image.open(str(path))
-    width, height = im.size
-    offset = (height / 1.78) / 2
-    center = width / 2
-    # Crop the center of the image
-    im = im.crop((center - offset, 0, center + offset, height))
-    with open(path, "w") as fp:
-        im.save(fp)
-        im.close()
+    with Image.open(str(path)) as im:
+        width, height = im.size
+        offset = (height / 1.78) / 2
+        center = width / 2
+        # Crop the center of the image
+        cropped = im.crop((center - offset, 0, center + offset, height))
+        try:
+            with open(path, "wb") as fp:
+                cropped.save(fp)
+        finally:
+            cropped.close()
     return True

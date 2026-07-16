@@ -103,6 +103,10 @@ class FeedbackRequired(PrivateError):
     pass
 
 
+class SignupSpamError(FeedbackRequired):
+    """Raised when Instagram rejects the legacy signup flow as spam."""
+
+
 class ChallengeError(PrivateError):
     pass
 
@@ -112,6 +116,77 @@ class ChallengeRedirection(ChallengeError):
 
 
 class ChallengeRequired(ChallengeError):
+    BLOKS_REDIRECT_ACTION = "com.bloks.www.ig.challenge.redirect.async"
+
+    def __init__(self, *args, **kwargs):
+        raw_message = kwargs.get("message")
+        if args and raw_message == "challenge_required":
+            kwargs["raw_message"] = raw_message
+            kwargs.pop("message")
+        elif raw_message == "challenge_required":
+            kwargs["raw_message"] = raw_message
+            kwargs["message"] = self._message_for_payload(kwargs)
+        super().__init__(*args, **kwargs)
+
+    @classmethod
+    def _challenge_api_path(cls, data):
+        challenge = data.get("challenge")
+        if isinstance(challenge, dict):
+            return str(challenge.get("api_path") or "")
+        return str(data.get("api_path") or "")
+
+    @classmethod
+    def _message_for_payload(cls, data):
+        api_path = cls._challenge_api_path(data)
+        step_name = data.get("step_name")
+        bloks_action = data.get("bloks_action")
+        challenge = data.get("challenge")
+        native_flow = isinstance(challenge, dict) and bool(challenge.get("native_flow"))
+
+        if api_path.startswith("/auth_platform/") or api_path.startswith("auth_platform/"):
+            return (
+                "Manual verification required via Instagram auth platform flow. "
+                "This challenge is not supported automatically; open the official Instagram app or web flow "
+                "on a trusted device, complete the checkpoint, then retry with the same saved client settings, "
+                "device identifiers, and proxy/IP."
+            )
+        if bloks_action == cls.BLOKS_REDIRECT_ACTION or step_name == "STEP_NAME":
+            return (
+                "Manual verification required via Instagram Bloks redirect checkpoint. "
+                "Confirm the login in the official Instagram app or web flow on a trusted device. "
+                "If you keep the same client instance alive, call challenge_bloks_redirect_dismiss() after approval; "
+                "otherwise retry with the same saved client settings, device identifiers, and proxy/IP."
+            )
+        if native_flow and api_path.startswith(("/challenge/", "/api/challenge/", "/api/v1/challenge/")):
+            return (
+                "Manual verification required via Instagram native challenge flow. "
+                "This checkpoint is not handled by challenge_code_handler or change_password_handler; "
+                "complete it in the official Instagram app or web flow on a trusted device. "
+                "Retry with the same saved client settings, device identifiers, and proxy/IP."
+            )
+        if api_path.startswith(("/challenge/", "/api/challenge/", "/api/v1/challenge/")):
+            return (
+                "Instagram returned a legacy challenge flow. Configure challenge_code_handler or "
+                "change_password_handler for supported email/SMS/password steps, or complete the checkpoint manually. "
+                "Retry with the same saved client settings, device identifiers, and proxy/IP."
+            )
+        if step_name:
+            return (
+                f"Instagram requires additional verification at challenge step `{step_name}`. "
+                "Configure challenge_code_handler or change_password_handler if this is a supported "
+                "code/password step, or complete the checkpoint manually in the official Instagram app or web flow. "
+                "Retry with the same saved client settings, device identifiers, and proxy/IP."
+            )
+        return (
+            "Instagram requires additional verification for this account/session. "
+            "Open the official Instagram app or web flow on a trusted device, complete the checkpoint there, "
+            "then retry with the same saved client settings, device identifiers, and proxy/IP. "
+            "Automatic challenge resolution is only available for supported code/password-reset flows; "
+            "Bloks redirect checkpoints usually require manual approval."
+        )
+
+
+class AccountSuspended(ClientError):
     pass
 
 
@@ -179,6 +254,14 @@ class UnknownError(PrivateError):
     pass
 
 
+class AccountEditError(PrivateError):
+    pass
+
+
+class AccountContactPointRequired(AccountEditError):
+    pass
+
+
 class TrackNotFound(NotFoundError):
     pass
 
@@ -221,6 +304,10 @@ class DirectThreadNotFound(NotFoundError, DirectError):
 
 class DirectMessageNotFound(NotFoundError, DirectError):
     pass
+
+
+class DirectMessageRequestsDisabled(DirectError):
+    """Raised when recipient privacy settings reject a new Direct message request."""
 
 
 class VideoTooLongException(PrivateError):
@@ -327,6 +414,18 @@ class MediaUnavailable(PrivateError):
     """Media is unavailable"""
 
 
+class CommentUnavailable(PrivateError):
+    """Comment is unavailable"""
+
+
+class CommentNotFound(PrivateError):
+    message = "Comment not found"
+
+
+class CommentsDisabled(PrivateError):
+    message = "Comments disabled by author"
+
+
 class ValidationError(AssertionError):
     pass
 
@@ -349,9 +448,24 @@ class AgeEligibilityError(ClientError):
 
 class CaptchaChallengeRequired(ClientError):
     """Captcha challenge required, and no solver is configured or available."""
-    def __init__(self, message="Captcha challenge required, but no solver configured or available.", challenge_details=None, **kwargs):
+
+    def __init__(
+        self,
+        message="Captcha challenge required, but no solver configured or available.",
+        challenge_details=None,
+        **kwargs,
+    ):
         self.challenge_details = challenge_details if challenge_details else {}
         # Example of extracting common details:
         # self.site_key = self.challenge_details.get('site_key')
         # self.challenge_url = self.challenge_details.get('challenge_url') # URL where captcha is presented
         super().__init__(message, **kwargs)
+
+
+class RelatedProfileRequired(ClientError):
+    """Raised by user_related_profiles_gql when IG returns no related
+    profiles. Used as a retry signal — the method raises it only if
+    the caller has opted in by setting ``client.num_retry`` below 4;
+    otherwise it returns an empty list."""
+
+    pass

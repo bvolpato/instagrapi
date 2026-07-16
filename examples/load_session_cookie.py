@@ -26,9 +26,7 @@ def get_instagram_cookies_from_browser(browser_name):
     try:
         import browser_cookie3
     except ImportError:
-        print(
-            "browser_cookie3 not installed. Install with: pip install browser_cookie3"
-        )
+        print("browser_cookie3 not installed. Install with: pip install browser_cookie3")
         return None
 
     supported_browsers = {
@@ -55,7 +53,8 @@ def get_instagram_cookies_from_browser(browser_name):
 
         instagram_cookies = {}
         for cookie in browser_cookies:
-            if "instagram.com" in cookie.domain:
+            domain = (cookie.domain or "").lstrip(".").lower()
+            if domain == "instagram.com" or domain.endswith(".instagram.com"):
                 instagram_cookies[cookie.name] = cookie.value
 
         print(f"Found {len(instagram_cookies)} Instagram cookies in {browser_name}")

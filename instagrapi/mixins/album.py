@@ -1,6 +1,7 @@
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from instagrapi.exceptions import (
@@ -8,9 +9,10 @@ from instagrapi.exceptions import (
     AlbumNotDownload,
     AlbumUnknownFormat,
 )
-from instagrapi.extractors import extract_media_v1
-from instagrapi.types import Location, Media, Usertag
-from instagrapi.utils import date_time_original, dumps
+from instagrapi.types import Location, Media, Track, Usertag
+from instagrapi.utils.serialization import dumps
+from instagrapi.utils.timing import date_time_original
+from instagrapi.utils.upload import with_coauthor_user_ids
 
 
 class DownloadAlbumMixin:
@@ -18,7 +20,7 @@ class DownloadAlbumMixin:
     Helper class to download album
     """
 
-    def album_download(self, media_pk: int, folder: Path = "") -> List[Path]:
+    def album_download(self, media_pk: int, folder: Path = "", overwrite: bool = True) -> List[Path]:
         """
         Download your album
 
@@ -29,6 +31,8 @@ class DownloadAlbumMixin:
         folder: Path, optional
             Directory in which you want to download the album, default is ""
             and will download the files to working directory.
+        overwrite: bool, optional
+            Whether to overwrite existing files. When False, existing files are returned as-is and not downloaded again.
 
         Returns
         -------
@@ -42,19 +46,27 @@ class DownloadAlbumMixin:
             filename = f"{media.user.username}_{resource.pk}"
             if resource.media_type == 1:
                 paths.append(
-                    self.photo_download_by_url(resource.thumbnail_url, filename, folder)
+                    self.photo_download_by_url(
+                        resource.thumbnail_url,
+                        filename,
+                        folder,
+                        overwrite=overwrite,
+                    )
                 )
             elif resource.media_type == 2:
                 paths.append(
-                    self.video_download_by_url(resource.video_url, filename, folder)
+                    self.video_download_by_url(
+                        resource.video_url,
+                        filename,
+                        folder,
+                        overwrite=overwrite,
+                    )
                 )
             else:
-                raise AlbumNotDownload(
-                    'Media type "{resource.media_type}" unknown for album (resource={resource.pk})'
-                )
+                raise AlbumNotDownload('Media type "{resource.media_type}" unknown for album (resource={resource.pk})')
         return paths
 
-    def album_download_by_urls(self, urls: List[str], folder: Path = "") -> List[Path]:
+    def album_download_by_urls(self, urls: List[str], folder: Path = "", overwrite: bool = True) -> List[Path]:
         """
         Download your album using specified URLs
 
@@ -65,6 +77,8 @@ class DownloadAlbumMixin:
         folder: Path, optional
             Directory in which you want to download the album, default is ""
             and will download the files to working directory.
+        overwrite: bool, optional
+            Whether to overwrite existing files. When False, existing files are returned as-is and not downloaded again.
 
         Returns
         -------
@@ -75,9 +89,9 @@ class DownloadAlbumMixin:
         for url in urls:
             file_name = urlparse(url).path.rsplit("/", 1)[1]
             if file_name.lower().endswith((".jpg", ".jpeg")):
-                paths.append(self.photo_download_by_url(url, file_name, folder))
+                paths.append(self.photo_download_by_url(url, file_name, folder, overwrite=overwrite))
             elif file_name.lower().endswith(".mp4"):
-                paths.append(self.video_download_by_url(url, file_name, folder))
+                paths.append(self.video_download_by_url(url, file_name, folder, overwrite=overwrite))
             else:
                 raise AlbumUnknownFormat()
         return paths
@@ -104,9 +118,7 @@ class DownloadAlbumMixin:
             elif resource.media_type == 2:
                 files.append(self.video_download_by_url_origin(resource.video_url))
             else:
-                raise AlbumNotDownload(
-                    'Media type "{resource.media_type}" unknown for album (resource={resource.pk})'
-                )
+                raise AlbumNotDownload('Media type "{resource.media_type}" unknown for album (resource={resource.pk})')
         return files
 
 
@@ -115,13 +127,15 @@ class UploadAlbumMixin:
         self,
         paths: List[Path],
         caption: str,
-        usertags: List[Usertag] = [],
+        usertags: Union[List[Usertag], List[List[Usertag]]] = [],
         location: Location = None,
         configure_timeout: int = 3,
         configure_handler=None,
         configure_exception=None,
         to_story=False,
         extra_data: Dict[str, str] = {},
+        schedule_at: Optional[Union[int, datetime]] = None,
+        coauthor_user_ids: Optional[List[Union[int, str]]] = None,
     ) -> Media:
         """
         Upload album to feed
@@ -132,8 +146,9 @@ class UploadAlbumMixin:
             List of paths for media to upload
         caption: str
             Media caption
-        usertags: List[Usertag], optional
-            List of users to be tagged on this upload, default is empty list.
+        usertags: List[Usertag] or List[List[Usertag]], optional
+            List of users to tag. A flat list tags the first carousel item for backward compatibility.
+            Use a nested list to tag each carousel item by index: ``usertags[0]`` applies to ``paths[0]``.
         location: Location, optional
             Location tag for this upload, default is none
         configure_timeout: int
@@ -146,16 +161,24 @@ class UploadAlbumMixin:
             Currently not used, default is False
         extra_data: Dict[str, str], optional
             Dict of extra data, if you need to add your params, like {"share_to_facebook": 1}.
+        schedule_at: int or datetime, optional
+            Unix timestamp in seconds or datetime when the album should be published.
+        coauthor_user_ids: List[int | str], optional
+            Instagram user IDs to invite as post coauthors.
 
         Returns
         -------
         Media
             An object of Media class
         """
+        if not paths:
+            raise AlbumUnknownFormat("Album upload requires at least one media path.")
+        extra_data = with_coauthor_user_ids(extra_data, coauthor_user_ids)
+        extra_data = self._scheduled_extra_data(extra_data, schedule_at)
         children = []
         for path in paths:
             path = Path(path)
-            if path.suffix.lower() in (".jpg", ".jpeg", ".webp"):
+            if path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
                 upload_id, width, height = self.photo_rupload(path, to_album=True)
                 children.append(
                     {
@@ -167,24 +190,18 @@ class UploadAlbumMixin:
                                 "crop_zoom": 1.0,
                             }
                         ),
-                        "extra": dumps(
-                            {"source_width": width, "source_height": height}
-                        ),
+                        "extra": dumps({"source_width": width, "source_height": height}),
                         "scene_capture_type": "",
                         "scene_type": None,
                     }
                 )
             elif path.suffix.lower() == ".mp4":
-                upload_id, width, height, duration, thumbnail = self.video_rupload(
-                    path, to_album=True
-                )
+                upload_id, width, height, duration, thumbnail = self.video_rupload(path, to_album=True)
                 children.append(
                     {
                         "upload_id": upload_id,
                         "clips": dumps([{"length": duration, "source_type": "4"}]),
-                        "extra": dumps(
-                            {"source_width": width, "source_height": height}
-                        ),
+                        "extra": dumps({"source_width": width, "source_height": height}),
                         "length": duration,
                         "poster_frame_index": "0",
                         "filter_type": "0",
@@ -195,7 +212,7 @@ class UploadAlbumMixin:
                 )
                 self.photo_rupload(thumbnail, upload_id)
             else:
-                raise AlbumUnknownFormat()
+                raise AlbumUnknownFormat(f'Unsupported album media format "{path.suffix}" for "{path.name}".')
 
         for attempt in range(50):
             self.logger.debug(f"Attempt #{attempt} to configure Album: {paths}")
@@ -215,18 +232,102 @@ class UploadAlbumMixin:
                 raise e
             else:
                 if configured:
-                    media = configured.get("media")
                     self.expose()
-                    return extract_media_v1(media)
-        raise (configure_exception or AlbumConfigureError)(
-            response=self.last_response, **self.last_json
+                    return self._extract_configured_media_or_raise(
+                        configured,
+                        configure_exception or AlbumConfigureError,
+                        "Album upload",
+                    )
+        raise (configure_exception or AlbumConfigureError)(response=self.last_response, **self.last_json)
+
+    def album_upload_with_music(
+        self,
+        paths: List[Path],
+        caption: str,
+        track: Union[Track, Dict],
+        usertags: Union[List[Usertag], List[List[Usertag]]] = [],
+        location: Location = None,
+        configure_timeout: int = 3,
+        configure_handler=None,
+        configure_exception=None,
+        to_story=False,
+        extra_data: Dict[str, str] = {},
+        audio_asset_start_time: Optional[int] = None,
+        overlap_duration: int = 30000,
+        browse_session_id: Optional[str] = None,
+        alacorn_session_id: Optional[str] = None,
+        schedule_at: Optional[Union[int, datetime]] = None,
+    ) -> Media:
+        """
+        Upload a feed album/carousel with attached music.
+
+        Parameters
+        ----------
+        paths: List[Path]
+            List of paths for media to upload.
+        caption: str
+            Media caption.
+        track: Track or dict
+            Track from music search/browser response or a compatible dict.
+        usertags: List[Usertag] or List[List[Usertag]], optional
+            List of users to tag. A flat list tags the first carousel item for backward compatibility.
+            Use a nested list to tag each carousel item by index: ``usertags[0]`` applies to ``paths[0]``.
+        location: Location, optional
+            Location tag for this upload.
+        configure_timeout: int
+            Timeout between configure attempts.
+        configure_handler
+            Configure handler method, default is None.
+        configure_exception
+            Configure exception class, default is None.
+        to_story: bool
+            Currently not used, default is False.
+        extra_data: Dict[str, str], optional
+            Additional configure params.
+        audio_asset_start_time: int, optional
+            Audio start time in milliseconds. Defaults to the first highlighted
+            start time from the track, or 0.
+        overlap_duration: int, optional
+            Audio duration in milliseconds, default 30000.
+        browse_session_id: str, optional
+            Music browser session id.
+        alacorn_session_id: str, optional
+            Music browser session id returned by ``music_in_feed_audio_browser``.
+            Fetched automatically when omitted.
+        schedule_at: int or datetime, optional
+            Unix timestamp in seconds or datetime when the album should be published.
+
+        Returns
+        -------
+        Media
+            A Media response from the call.
+        """
+        data = dict(extra_data or {})
+        data["music_params"] = self._feed_music_params(
+            track,
+            audio_asset_start_time=audio_asset_start_time,
+            overlap_duration=overlap_duration,
+            browse_session_id=browse_session_id,
+            alacorn_session_id=alacorn_session_id,
+        )
+        return self.album_upload(
+            paths,
+            caption,
+            usertags=usertags,
+            location=location,
+            configure_timeout=configure_timeout,
+            configure_handler=configure_handler,
+            configure_exception=configure_exception,
+            to_story=to_story,
+            extra_data=data,
+            schedule_at=schedule_at,
         )
 
     def album_configure(
         self,
         childs: List,
         caption: str,
-        usertags: List[Usertag] = [],
+        usertags: Union[List[Usertag], List[List[Usertag]]] = [],
         location: Location = None,
         extra_data: Dict[str, str] = {},
     ) -> Dict:
@@ -239,8 +340,9 @@ class UploadAlbumMixin:
             List of media/resources of an album
         caption: str
             Media caption
-        usertags: List[Usertag], optional
-            List of users to be tagged on this upload, default is empty list.
+        usertags: List[Usertag] or List[List[Usertag]], optional
+            List of users to tag. A flat list tags the first carousel item for backward compatibility.
+            Use a nested list to tag each carousel item by index: ``usertags[0]`` applies to ``childs[0]``.
         location: Location, optional
             Location tag for this upload, default is None
         extra_data: Dict[str, str], optional
@@ -253,10 +355,16 @@ class UploadAlbumMixin:
         """
         upload_id = str(int(time.time() * 1000))
         if usertags:
-            usertags = [
-                {"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in usertags
-            ]
-            childs[0]["usertags"] = dumps({"in": usertags})
+            if isinstance(usertags[0], list):
+                for child, child_usertags in zip(childs, usertags):
+                    if not child_usertags:
+                        continue
+                    child["usertags"] = dumps(
+                        {"in": [{"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in child_usertags]}
+                    )
+            else:
+                child_usertags = [{"user_id": tag.user.pk, "position": [tag.x, tag.y]} for tag in usertags]
+                childs[0]["usertags"] = dumps({"in": child_usertags})
         data = {
             "timezone_offset": str(self.timezone_offset),
             "source_type": "4",
@@ -280,6 +388,4 @@ class UploadAlbumMixin:
             ],
             **extra_data,
         }
-        return self.private_request(
-            "media/configure_sidecar/", self.with_default_data(data)
-        )
+        return self.private_request("media/configure_sidecar/", self.with_default_data(data))

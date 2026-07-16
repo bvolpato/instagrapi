@@ -1,4 +1,6 @@
 import logging
+from copy import deepcopy
+from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -9,13 +11,14 @@ from instagrapi.mixins.album import DownloadAlbumMixin, UploadAlbumMixin
 from instagrapi.mixins.auth import LoginMixin
 from instagrapi.mixins.bloks import BloksMixin
 from instagrapi.mixins.challenge import ChallengeResolveMixin
-from instagrapi.mixins.clip import DownloadClipMixin, UploadClipMixin
+from instagrapi.mixins.clip import ClipMixin, DownloadClipMixin, UploadClipMixin
 from instagrapi.mixins.collection import CollectionMixin
 from instagrapi.mixins.comment import CommentMixin
 from instagrapi.mixins.direct import DirectMixin
 from instagrapi.mixins.explore import ExploreMixin
 from instagrapi.mixins.fbsearch import FbSearchMixin
 from instagrapi.mixins.fundraiser import FundraiserMixin
+from instagrapi.mixins.graphql import PrivateGraphQLRequestMixin
 from instagrapi.mixins.hashtag import HashtagMixin
 from instagrapi.mixins.highlight import HighlightMixin
 from instagrapi.mixins.igtv import DownloadIGTVMixin, UploadIGTVMixin
@@ -33,6 +36,8 @@ from instagrapi.mixins.public import (
     PublicRequestMixin,
     TopSearchesPublicMixin,
 )
+from instagrapi.mixins.quicksnap import QuickSnapMixin
+from instagrapi.mixins.realtime import RealtimeMixin
 from instagrapi.mixins.share import ShareMixin
 from instagrapi.mixins.signup import SignUpMixin
 from instagrapi.mixins.story import StoryMixin
@@ -52,6 +57,7 @@ class Client(
     PublicRequestMixin,
     ChallengeResolveMixin,
     PrivateRequestMixin,
+    PrivateGraphQLRequestMixin,
     TopSearchesPublicMixin,
     ProfilePublicMixin,
     LoginMixin,
@@ -80,6 +86,7 @@ class Client(
     StoryMixin,
     PasswordMixin,
     SignUpMixin,
+    ClipMixin,
     DownloadClipMixin,
     UploadClipMixin,
     ReelsMixin,
@@ -88,22 +95,36 @@ class Client(
     TOTPMixin,
     MultipleAccountsMixin,
     NoteMixin,
+    QuickSnapMixin,
     FundraiserMixin,
+    RealtimeMixin,
 ):
     proxy = None
 
     def __init__(
         self,
-        settings: dict = {},
-        proxy: str | None = None,
-        delay_range: list | None = None,
+        settings: Optional[dict] = None,
+        proxy: Optional[str] = None,
+        delay_range: Optional[list] = None,
         logger=DEFAULT_LOGGER,
+        override_app_version: bool = False,
         **kwargs,
     ):
+        self.tls_verify = kwargs.pop("tls_verify", True)
+        self.request_timeout = kwargs.pop("request_timeout", 1)
+        self.public_request_retries_count = kwargs.pop("public_request_retries_count", 3)
+        self.public_request_retries_timeout = kwargs.pop("public_request_retries_timeout", 2)
+        self.session_retry_total = kwargs.pop("session_retry_total", 3)
+        self.session_retry_backoff_factor = kwargs.pop("session_retry_backoff_factor", 2)
+        self.session_retry_statuses = list(kwargs.pop("session_retry_statuses", [429, 500, 502, 503, 504]))
+        self.timezone_offset = kwargs.pop("timezone_offset", -14400)
+        self.timezone_name = kwargs.pop("timezone_name", "")
+        self.push_disabled = kwargs.pop("push_disabled", True)
 
         super().__init__(**kwargs)
 
-        self.settings = settings
+        self.settings = deepcopy(settings or {})
+        self.override_app_version = override_app_version
         self.logger = logger
         self.delay_range = delay_range
 
@@ -111,20 +132,23 @@ class Client(
 
         self.init()
 
-    def set_proxy(self, dsn: str | None):
+    def set_proxy(self, dsn: Optional[str]):
         if dsn:
-            assert isinstance(
-                dsn, str
-            ), f'Proxy must been string (URL), but now "{dsn}" ({type(dsn)})'
+            assert isinstance(dsn, str), f'Proxy must been string (URL), but now "{dsn}" ({type(dsn)})'
             self.proxy = dsn
             proxy_href = "{scheme}{href}".format(
                 scheme="http://" if not urlparse(self.proxy).scheme else "",
                 href=self.proxy,
             )
-            self.public.proxies = self.private.proxies = {
+            proxies = {
                 "http": proxy_href,
                 "https": proxy_href,
             }
+            self.public.proxies = self.private.proxies = proxies
+            if hasattr(self, "graphql"):
+                self.graphql.proxies = proxies
             return True
         self.public.proxies = self.private.proxies = {}
+        if hasattr(self, "graphql"):
+            self.graphql.proxies = {}
         return False

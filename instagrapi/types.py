@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     FilePath,
     HttpUrl,
     ValidationError,
@@ -12,28 +13,28 @@ from pydantic import (
 
 
 class TypesBaseModel(BaseModel):
-    model_config = ConfigDict(
-        coerce_numbers_to_str=True
-    )  # (jarrodnorwell) fixed city_id issue
+    model_config = ConfigDict(coerce_numbers_to_str=True)  # (jarrodnorwell) fixed city_id issue
+
+
+StoryResizeMode = Literal["fill", "fit"]
 
 
 def validate_external_url(cls, v):
     if v is None or (v.startswith("http") and "://" in v) or isinstance(v, str):
         return v
-    raise ValidationError(
-        "external_url must be a URL or string"
-    )  # Corrected 'been' to 'be'
+    raise ValidationError("external_url must be a URL or string")  # Corrected 'been' to 'be'
 
 
 class Resource(TypesBaseModel):
     pk: str
     video_url: Optional[HttpUrl] = None  # for Video and IGTV
-    thumbnail_url: HttpUrl
+    thumbnail_url: Optional[HttpUrl] = None
     media_type: int
+    usertags: List["Usertag"] = []
 
 
 class BioLink(TypesBaseModel):
-    link_id: str
+    link_id: Optional[str] = None
     url: str
     lynx_url: Optional[str] = None
     link_type: Optional[str] = None
@@ -70,6 +71,8 @@ class User(TypesBaseModel):
     biography: Optional[str] = ""
     bio_links: List[BioLink] = []
     external_url: Optional[str] = None
+    show_text_post_app_badge: Optional[bool] = None
+    text_post_app_badge_label: Optional[str] = None
     account_type: Optional[int] = None
     is_business: bool
 
@@ -101,6 +104,29 @@ class User(TypesBaseModel):
         raise ValidationError("external_url must be a URL or string")
 
 
+class About(TypesBaseModel):
+    username: Optional[str] = ""
+    is_verified: Optional[bool] = False
+    country: Optional[str] = ""
+    date: Optional[str] = ""
+    former_usernames: Optional[str] = ""
+
+
+class AddressBookPhone(TypesBaseModel):
+    phone_number: str
+
+
+class AddressBookEmail(TypesBaseModel):
+    email_address: str
+
+
+class AddressBookContact(TypesBaseModel):
+    phone_numbers: List[AddressBookPhone] = Field(default_factory=list)
+    email_addresses: List[AddressBookEmail] = Field(default_factory=list)
+    first_name: str = ""
+    last_name: str = ""
+
+
 class Account(TypesBaseModel):
     pk: str
     username: str
@@ -124,6 +150,17 @@ class Account(TypesBaseModel):
         raise ValidationError("external_url must be a URL or string")
 
 
+class RelationshipShort(TypesBaseModel):
+    user_id: str
+    following: bool
+    incoming_request: bool
+    is_bestie: bool
+    is_feed_favorite: bool
+    is_private: bool
+    is_restricted: bool
+    outgoing_request: bool
+
+
 class UserShort(TypesBaseModel):
     def __hash__(self):
         return hash(self.pk)
@@ -139,8 +176,22 @@ class UserShort(TypesBaseModel):
     profile_pic_url: Optional[HttpUrl] = None
     profile_pic_url_hd: Optional[HttpUrl] = None
     is_private: Optional[bool] = None
-    # is_verified: bool  # not found in hashtag_medias_v1
-    # stories: List = [] # not found in fbsearch_suggested_profiles
+    stories: List = Field(default_factory=list)
+    is_verified: Optional[bool] = None
+    latest_reel_media: Optional[int] = None
+    has_anonymous_profile_picture: Optional[bool] = None
+    profile_pic_id: Optional[str] = None
+    fbid_v2: Optional[str] = None
+    interop_messaging_user_fbid: Optional[str] = None
+    strong_id__: Optional[str] = None
+    account_badges: List[dict] = Field(default_factory=list)
+    friendship_status: Optional[RelationshipShort] = None
+
+
+class Viewer(UserShort):
+    has_liked: bool = False
+    reply_text: str = ""
+    is_spam_viewer: bool = False
 
 
 class Usertag(TypesBaseModel):
@@ -215,9 +266,7 @@ class SharedMediaImageVersions(TypesBaseModel):
 
     additional_candidates: Optional[AdditionalCandidates] = None
     candidates: List[SharedMediaImageCandidate] = []
-    scrubber_spritesheet_info_candidates: Optional[
-        ScrubberSpritesheetInfoCandidates
-    ] = None
+    scrubber_spritesheet_info_candidates: Optional[ScrubberSpritesheetInfoCandidates] = None
 
 
 class ClipsAchievementsInfo(TypesBaseModel):
@@ -404,7 +453,7 @@ class ClipsMetadata(TypesBaseModel):
     disable_use_in_clips_client_cache: bool = False
     external_media_info: Optional[dict] = None
     is_fan_club_promo_video: bool = False
-    is_shared_to_fb: bool = False
+    is_shared_to_fb: Optional[bool] = None
     mashup_info: Optional[ClipsMashupInfo] = None
     merchandising_pill_info: Optional[dict] = None
     music_canonical_id: str
@@ -420,6 +469,47 @@ class ClipsMetadata(TypesBaseModel):
     template_info: Optional[dict] = None
     may_have_template_info: Optional[dict] = None
     viewer_interaction_settings: Optional[dict] = None
+
+
+class MediaDimensions(TypesBaseModel):
+    height: Optional[int] = None
+    width: Optional[int] = None
+
+
+class MediaDashInfo(TypesBaseModel):
+    is_dash_eligible: Optional[bool] = False
+    video_dash_manifest: Optional[str] = None
+    number_of_qualities: Optional[int] = 0
+
+
+class ClipsMusicAttributionInfo(TypesBaseModel):
+    artist_name: Optional[str] = None
+    song_name: Optional[str] = None
+    uses_original_audio: Optional[bool] = None
+    should_mute_audio: Optional[bool] = None
+    should_mute_audio_reason: Optional[str] = None
+    audio_id: Optional[str] = None
+
+
+class MediaInlineComment(TypesBaseModel):
+    pk: str
+    text: str
+    user: UserShort
+    created_at_utc: datetime
+    has_liked: Optional[bool] = None
+    like_count: Optional[int] = None
+    replied_to_comment_id: Optional[str] = None
+    did_report_as_spam: Optional[bool] = None
+    is_restricted_pending: Optional[bool] = None
+    replies_count: Optional[int] = 0
+    replies: List["MediaInlineComment"] = []
+
+
+class MediaCommentsPreview(TypesBaseModel):
+    count: Optional[int] = 0
+    has_next_page: Optional[bool] = False
+    end_cursor: Optional[str] = None
+    comments: List[MediaInlineComment] = []
 
 
 class Media(TypesBaseModel):
@@ -439,21 +529,34 @@ class Media(TypesBaseModel):
     like_count: int
     play_count: Optional[int] = None
     has_liked: Optional[bool] = None
+    caption_is_edited: Optional[bool] = False
+    dimensions: Optional[MediaDimensions] = None
+    has_audio: Optional[bool] = False
+    like_and_view_counts_disabled: Optional[bool] = False
+    viewer_can_reshare: Optional[bool] = False
+    viewer_has_saved: Optional[bool] = False
+    is_paid_partnership: Optional[bool] = False
+    is_affiliate: Optional[bool] = False
+    dash_info: Optional[MediaDashInfo] = None
+    clips_music_attribution_info: Optional[ClipsMusicAttributionInfo] = None
+    comments_preview: Optional[MediaCommentsPreview] = None
+    hoisted_comments: List[MediaInlineComment] = []
     caption_text: str
     accessibility_caption: Optional[str] = None
     usertags: List[Usertag]
+    coauthor_producers: List[UserShort] = []
     sponsor_tags: List[UserShort]
     video_url: Optional[HttpUrl] = None  # for Video and IGTV
     view_count: Optional[int] = 0  # for Video and IGTV
     video_duration: Optional[float] = 0.0  # for Video and IGTV
     title: Optional[str] = ""
     resources: List[Resource] = []
-    clips_metadata: Optional[ClipsMetadata | dict] = None
+    clips_metadata: Optional[Union[ClipsMetadata, dict]] = None
 
 
 class MediaXma(TypesBaseModel):
     # media_type: int
-    video_url: HttpUrl  # for Video and IGTV
+    video_url: str  # XMA target_url; can be http(s) or an Instagram deep link (instagram://)
     title: Optional[str] = ""
     preview_url: Optional[str] = None
     preview_url_mime_type: Optional[str] = None
@@ -641,6 +744,14 @@ class Story(TypesBaseModel):
     stickers: List[StorySticker]
     medias: List[StoryMedia] = []
     polls: List[StoryPoll] = []
+
+
+class StoryArchiveDay(TypesBaseModel):
+    id: str
+    timestamp: datetime
+    media_count: int
+    reel_type: str
+    latest_reel_media: Optional[int] = None
 
 
 class Guide(TypesBaseModel):
@@ -848,6 +959,8 @@ class ReplyMessage(TypesBaseModel):
     story_share: Optional[dict] = None
     felix_share: Optional[dict] = None
     xma_share: Optional[MediaXma] = None
+    generic_xma: Optional[List[MediaXma]] = None
+    raw_xma: Optional[dict] = None
     clip: Optional[Media] = None
     placeholder: Optional[dict] = None
 
@@ -872,6 +985,8 @@ class DirectMessage(TypesBaseModel):
     story_share: Optional[dict] = None
     felix_share: Optional[dict] = None
     xma_share: Optional[MediaXma] = None
+    generic_xma: Optional[List[MediaXma]] = None
+    raw_xma: Optional[dict] = None
     clip: Optional[Media] = None
     placeholder: Optional[dict] = None
     client_context: Optional[str] = None
@@ -917,11 +1032,11 @@ class DirectThread(TypesBaseModel):
     mentions_muted: bool
     approval_required_for_new_members: bool
     input_mode: int
-    business_thread_folder: int
-    read_state: int
-    is_close_friend_thread: bool
-    assigned_admin_id: int
-    shh_mode_enabled: bool
+    business_thread_folder: Optional[int] = None
+    read_state: Optional[int] = None
+    is_close_friend_thread: bool = False
+    assigned_admin_id: Optional[int] = None
+    shh_mode_enabled: Optional[bool] = None
     last_seen_at: Dict[str, LastSeenInfo] = {}
 
     def is_seen(self, user_id: str):
@@ -933,9 +1048,7 @@ class DirectThread(TypesBaseModel):
             return False
         own_timestamp = self.last_seen_at[user_id].timestamp.timestamp()
         timestamps = [
-            (v.timestamp.timestamp() - own_timestamp) > 0
-            for k, v in self.last_seen_at.items()
-            if k != user_id
+            (v.timestamp.timestamp() - own_timestamp) > 0 for k, v in self.last_seen_at.items() if k != user_id
         ]
         return not any(timestamps)
 
@@ -952,17 +1065,6 @@ class Relationship(TypesBaseModel):
     is_private: bool
     is_restricted: bool
     muting: bool
-    outgoing_request: bool
-
-
-class RelationshipShort(TypesBaseModel):
-    user_id: str
-    following: bool
-    incoming_request: bool
-    is_bestie: bool
-    is_feed_favorite: bool
-    is_private: bool
-    is_restricted: bool
     outgoing_request: bool
 
 
@@ -991,6 +1093,7 @@ class Track(TypesBaseModel):
     subtitle: str
     display_artist: str
     audio_cluster_id: int
+    music_canonical_id: Optional[str] = None
     artist_id: Optional[int] = None
     cover_artwork_uri: Optional[HttpUrl] = None
     cover_artwork_thumbnail_uri: Optional[HttpUrl] = None

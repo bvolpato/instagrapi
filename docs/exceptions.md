@@ -20,6 +20,7 @@
 | ClientUnknownError        | ClientError | Occurs when Instagram returns an unknown error
 | WrongCursorError          | ClientError | Occurs when the cursor for pagination is passed in the wrong format
 | ClientStatusFail          | ClientError | Occurs when Instagram returns message with status=fail with details
+| RelatedProfileRequired    | ClientError | Raised by `user_related_profiles_gql` on empty results when caller has set `client.num_retry < 4` (opt-in retry signal)
 
 ## Proxy Exceptions
 
@@ -50,9 +51,11 @@
 | FeedbackRequired         | PrivateError | Raises when get message=feedback_required
 | PreLoginRequired         | ClientError | Raises when authorization is required before calling a method
 | LoginRequired            | PrivateError | Raises when get message=login_required (from Instagram)
-| BadPassword              | PrivateError | Raises when get message=bad_password
+| BadPassword              | PrivateError | Raises when get message=bad_password. See [`BadPassword` troubleshooting](https://instagrapi.com/guides/errors/bad-password/) for proxy/IP/device/session trust cases where the password is correct but Instagram rejects the login context.
 | TwoFactorRequired        | PrivateError | Raises when get message=two_factor_required
 | UnknownError             | PrivateError | Raises when get unknown message (new message from instagram)
+| AccountEditError         | PrivateError | Raises when `accounts/edit_profile/` returns an account edit failure
+| AccountContactPointRequired | AccountEditError | Raises when profile editing requires an email or confirmed phone number
 | BadCredentials           | PrivateError | The login and password pair for your account have not been passed
 | IsRegulatedC18Error      | ClientBadRequestError | The user is limited to 18+
 
@@ -62,7 +65,7 @@
 | ------------------------------ | -------------- |------------------------------------------------------------ |
 | ChallengeError                 | PrivateError   | Base Challenge Exception (received from Instagram)
 | ChallengeRedirection           | ChallengeError | Raises when get type=CHALLENGE_REDIRECTION
-| ChallengeRequired              | ChallengeError | Raises when get message=challenge_required
+| ChallengeRequired              | ChallengeError | Raises when Instagram requires additional verification; raw `message=challenge_required` responses get a payload-specific recovery message
 | ChallengeSelfieCaptcha         | ChallengeError | Raises when get step=selfie_captcha
 | ChallengeUnknownStep           | ChallengeError | Occurs when challenge is unknown
 | SelectContactPointRecoveryForm | ChallengeError | Raises when get challengeType=SelectContactPointRecoveryForm
@@ -113,6 +116,7 @@
 | DirectError              | PrivateError   | Base Direct Exception
 | DirectThreadNotFound     | DirectError    | Raises when thread not found
 | DirectMessageNotFound    | DirectError    | Raises when message in thread not found
+| DirectMessageRequestsDisabled | DirectError | Raises when recipient privacy settings reject a new Direct message request
 
 ## Photo Exceptions
 

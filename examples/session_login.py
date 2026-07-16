@@ -1,6 +1,7 @@
 """Examples for session persistence and sessionid login."""
 
 import os
+
 from instagrapi import Client
 
 IG_USERNAME = os.environ.get("IG_USERNAME")
@@ -19,7 +20,7 @@ def login_with_persistence() -> Client:
 
 
 def login_with_sessionid(sessionid: str) -> Client:
-    """Return Client logged in only with a sessionid."""
+    """Return Client logged in only with a sessionid accepted by private API."""
     cl = Client()
     cl.login_by_sessionid(sessionid)
     return cl

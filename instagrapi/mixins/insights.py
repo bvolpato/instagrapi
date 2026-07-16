@@ -1,8 +1,8 @@
 import time
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 from instagrapi.exceptions import ClientError, MediaError, UserError
-from instagrapi.utils import json_value
+from instagrapi.utils.serialization import json_value
 
 POST_TYPES = ("ALL", "CAROUSEL_V2", "IMAGE", "SHOPPING", "VIDEO")
 TIME_FRAMES = (
@@ -25,16 +25,29 @@ DATA_ORDERS = (
     "VIDEO_VIEW_COUNT",
     "SAVE_COUNT",
 )
+EMPTY_GRAPHQL_QUERY_PARAM = ""  # Instagram GraphQL uses this as an empty access_token placeholder.
 
-try:
-    from typing import Literal
-
-    POST_TYPE = Literal[POST_TYPES]
-    TIME_FRAME = Literal[TIME_FRAMES]
-    DATA_ORDERING = Literal[DATA_ORDERS]
-except ImportError:
-    # python <= 3.8
-    POST_TYPE = TIME_FRAME = DATA_ORDERING = str
+POST_TYPE = Literal["ALL", "CAROUSEL_V2", "IMAGE", "SHOPPING", "VIDEO"]
+TIME_FRAME = Literal[
+    "ONE_WEEK",
+    "ONE_MONTH",
+    "THREE_MONTHS",
+    "SIX_MONTHS",
+    "ONE_YEAR",
+    "TWO_YEARS",
+]
+DATA_ORDERING = Literal[
+    "REACH_COUNT",
+    "LIKE_COUNT",
+    "FOLLOW",
+    "SHARE_COUNT",
+    "BIO_LINK_CLICK",
+    "COMMENT_COUNT",
+    "IMPRESSION_COUNT",
+    "PROFILE_VIEW",
+    "VIDEO_VIEW_COUNT",
+    "SAVE_COUNT",
+]
 
 
 class InsightsMixin:
@@ -55,11 +68,11 @@ class InsightsMixin:
 
         Parameters
         ----------
-        post_type: str, optional
+        post_type: POST_TYPE, optional
             Types of posts, default is "ALL"
-        time_frame: str, optional
+        time_frame: TIME_FRAME, optional
             Time frame to pull media insights, default is "TWO_YEARS"
-        data_ordering: str, optional
+        data_ordering: DATA_ORDERING, optional
             Ordering strategy for the data, default is "REACH_COUNT"
         count: int, optional
             Max media count for retrieving, default is 0
@@ -71,15 +84,9 @@ class InsightsMixin:
         List[Dict]
             List of dictionaries of response from the call
         """
-        assert (
-            post_type in POST_TYPES
-        ), f'Unsupported post_type="{post_type}" {POST_TYPES}'
-        assert (
-            time_frame in TIME_FRAMES
-        ), f'Unsupported time_frame="{time_frame}" {TIME_FRAMES}'
-        assert (
-            data_ordering in DATA_ORDERS
-        ), f'Unsupported data_ordering="{data_ordering}" {DATA_ORDERS}'
+        assert post_type in POST_TYPES, f'Unsupported post_type="{post_type}" {POST_TYPES}'
+        assert time_frame in TIME_FRAMES, f'Unsupported time_frame="{time_frame}" {TIME_FRAMES}'
+        assert data_ordering in DATA_ORDERS, f'Unsupported data_ordering="{data_ordering}" {DATA_ORDERS}'
         assert self.user_id, "Login required"
         medias = []
         cursor = None
@@ -100,7 +107,10 @@ class InsightsMixin:
             "timeframe": time_frame,
             "search_base": "USER",
             "is_user": "true",
-            "queryParams": {"access_token": "", "id": self.user_id},
+            "queryParams": {
+                "access_token": EMPTY_GRAPHQL_QUERY_PARAM,
+                "id": self.user_id,
+            },
         }
         while True:
             if cursor:
@@ -163,7 +173,10 @@ class InsightsMixin:
             "activityTab": True,
             "audienceTab": True,
             "contentTab": True,
-            "query_params": {"access_token": "", "id": self.user_id},
+            "query_params": {
+                "access_token": EMPTY_GRAPHQL_QUERY_PARAM,
+                "id": self.user_id,
+            },
         }
 
         result = self.private_request(
@@ -200,13 +213,28 @@ class InsightsMixin:
             "strip_defaults": False,
         }
         query_params = {
-            "query_params": {"access_token": "", "id": media_pk},
+            "query_params": {"access_token": EMPTY_GRAPHQL_QUERY_PARAM, "id": media_pk},
         }
         try:
             result = self.private_request(
                 "ads/graphql/",
                 self.with_query_params(data, query_params),
             )
-            return result["data"]["instagram_post_by_igid"]
+            media = json_value(result, "data", "instagram_post_by_igid", default=None)
+            if not media:
+                raise MediaError(
+                    "Instagram did not return insight data for media",
+                    media_pk=media_pk,
+                    **(self.last_json or {}),
+                )
+            if not media.get("inline_insights_node"):
+                raise MediaError(
+                    "Instagram returned media metadata without inline insights data",
+                    media_pk=media_pk,
+                    **(self.last_json or {}),
+                )
+            return media
+        except MediaError:
+            raise
         except ClientError as e:
-            raise MediaError(e.message, media_pk=media_pk, **self.last_json)
+            raise MediaError(e.message, media_pk=media_pk, **(self.last_json or {}))

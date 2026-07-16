@@ -1,27 +1,53 @@
+import contextlib
+import os
 import tempfile
 from pathlib import Path
 from typing import List
 from urllib.parse import urlparse
 
 from .types import StoryBuild, StoryMention, StorySticker
+from .utils.video import MOVIEPY_2_FFMPEG_MESSAGE
 
-try:
-    from moviepy import CompositeVideoClip, ImageClip, TextClip, VideoFileClip
-except ImportError:
+STORY_BUILDER_VIDEO_EXTRA_MESSAGE = f"StoryBuilder requires MoviePy 2.2.1 and ffmpeg. {MOVIEPY_2_FFMPEG_MESSAGE}"
+STORY_BUILDER_PILLOW_MESSAGE = "StoryBuilder photo rendering requires Pillow. Install Pillow and retry."
+
+
+def _ffmpeg_unavailable(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "ffmpeg" in message or "imageio_ffmpeg_exe" in message or "no ffmpeg exe" in message
+
+
+def _import_moviepy_for_story():
     try:
-        from moviepy.editor import (
-            CompositeVideoClip,
-            ImageClip,
-            TextClip,
-            VideoFileClip,
-        )
-    except ImportError:
-        raise Exception("Please install moviepy>=1.0.3 and retry")
+        from moviepy import CompositeVideoClip, ImageClip, TextClip, VideoFileClip, vfx
+    except ImportError as exc:
+        raise RuntimeError(STORY_BUILDER_VIDEO_EXTRA_MESSAGE) from exc
+    except Exception as exc:
+        if _ffmpeg_unavailable(exc):
+            raise RuntimeError(STORY_BUILDER_VIDEO_EXTRA_MESSAGE) from exc
+        raise
+    return CompositeVideoClip, ImageClip, TextClip, VideoFileClip, vfx
 
-try:
-    from PIL import Image
-except ImportError:
-    raise Exception("You don't have PIL installed. Please install PIL or Pillow>=8.1.1")
+
+def _import_pillow_for_story():
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(STORY_BUILDER_PILLOW_MESSAGE) from exc
+    return Image
+
+
+def _make_tmp_path(suffix: str) -> str:
+    """Create a uniquely-named tempfile path safely.
+
+    ``tempfile.mktemp`` is deprecated and prone to TOCTOU races. We
+    use ``mkstemp`` to atomically create the file under a unique
+    name, then close the file descriptor — the path is reserved and
+    safe for the caller to reopen.
+    """
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return path
 
 
 class StoryBuilder:
@@ -31,6 +57,13 @@ class StoryBuilder:
 
     width = 720
     height = 1280
+
+    @staticmethod
+    def _fit_size(source_size, canvas_size):
+        source_width, source_height = source_size
+        canvas_width, canvas_height = canvas_size
+        scale = min(canvas_width / float(source_width), canvas_height / float(source_height))
+        return int(source_width * scale), int(source_height * scale)
 
     def __init__(
         self,
@@ -92,6 +125,7 @@ class StoryBuilder:
         StoryBuild
             An object of StoryBuild
         """
+        CompositeVideoClip, ImageClip, TextClip, _, vfx = _import_moviepy_for_story()
         clips = []
         stickers = []
         # Background
@@ -104,7 +138,7 @@ class StoryBuilder:
         clip_top = (self.height - clip.size[1]) / 2
         if clip_top > 90:
             clip_top -= 50
-        media_clip = clip.set_position((clip_left, clip_top))
+        media_clip = clip.with_position((clip_left, clip_top))
         clips.append(media_clip)
         mention = self.mentions[0] if self.mentions else None
         # Text clip
@@ -115,11 +149,10 @@ class StoryBuilder:
                 caption = f"@{mention.user.username}"
         if caption:
             text_clip = TextClip(
-                caption,
+                text=caption,
                 color=color,
                 font=font,
-                kerning=-1,
-                fontsize=fontsize,
+                font_size=fontsize,
                 method="label",
             )
             text_clip_left = (self.width - 600) / 2
@@ -128,28 +161,27 @@ class StoryBuilder:
             if offset > 0:
                 text_clip_top -= offset + 90
             text_clip = (
-                text_clip.resize(width=600)
-                .set_position((text_clip_left, text_clip_top))
-                .fadein(3)
+                text_clip.resized(width=600)
+                .with_position((text_clip_left, text_clip_top))
+                .with_effects([vfx.FadeIn(3)])
             )
             clips.append(text_clip)
         if link:
             url = urlparse(link)
             link_clip = TextClip(
-                url.netloc,
+                text=url.netloc,
                 color="blue",
                 bg_color="white",
                 font=font,
-                kerning=-1,
-                fontsize=32,
+                font_size=32,
                 method="label",
             )
             link_clip_left = (self.width - 400) / 2
             link_clip_top = clip.size[1] / 2
             link_clip = (
-                link_clip.resize(width=400)
-                .set_position((link_clip_left, link_clip_top))
-                .fadein(3)
+                link_clip.resized(width=400)
+                .with_position((link_clip_left, link_clip_top))
+                .with_effects([vfx.FadeIn(3)])
             )
             link_sticker = StorySticker(
                 # x=160.0, y=641.0, z=0, width=400.0, height=88.0,
@@ -181,28 +213,20 @@ class StoryBuilder:
         if getattr(clip, "duration", None):
             if duration > int(clip.duration) or not duration:
                 duration = int(clip.duration)
-        destination = tempfile.mktemp(".mp4")
-        cvc = (
-            CompositeVideoClip(clips, size=(self.width, self.height))
-            .set_fps(24)
-            .set_duration(duration)
-        )
+        destination = _make_tmp_path(".mp4")
+        cvc = CompositeVideoClip(clips, size=(self.width, self.height)).with_fps(24).with_duration(duration)
         cvc.write_videofile(destination, codec="libx264", audio=True, audio_codec="aac")
         paths = []
         if duration > 15:
             for i in range(duration // 15 + (1 if duration % 15 else 0)):
-                path = tempfile.mktemp(".mp4")
+                path = _make_tmp_path(".mp4")
                 start = i * 15
                 rest = duration - start
                 end = start + (rest if rest < 15 else 15)
-                sub = cvc.subclip(start, end)
-                sub.write_videofile(
-                    path, codec="libx264", audio=True, audio_codec="aac"
-                )
+                sub = cvc.subclipped(start, end)
+                sub.write_videofile(path, codec="libx264", audio=True, audio_codec="aac")
                 paths.append(path)
-        return StoryBuild(
-            mentions=mentions, path=destination, paths=paths, stickers=stickers
-        )
+        return StoryBuild(mentions=mentions, path=destination, paths=paths, stickers=stickers)
 
     def video(
         self,
@@ -231,10 +255,57 @@ class StoryBuilder:
         StoryBuild
             An object of StoryBuild
         """
+        _, _, _, VideoFileClip, _ = _import_moviepy_for_story()
         clip = VideoFileClip(str(self.path), has_mask=True)
         build = self.build_main(clip, max_duration, font, fontsize, color, link)
         clip.close()
         return build
+
+    def video_fit(
+        self,
+        max_duration: int = 0,
+        background_color=(0, 0, 0),
+    ):
+        """
+        Build a Story video canvas that fits the full source video without cropping.
+        """
+        CompositeVideoClip, _, _, VideoFileClip, _ = _import_moviepy_for_story()
+        source_clip = None
+        work_clip = None
+        resized_clip = None
+        positioned_clip = None
+        canvas_clip = None
+        try:
+            source_clip = VideoFileClip(str(self.path), has_mask=True)
+            duration = float(source_clip.duration or max_duration or 0)
+            if max_duration and duration > max_duration:
+                duration = float(max_duration)
+                work_clip = source_clip.subclipped(0, duration)
+            else:
+                work_clip = source_clip
+            fit_width, fit_height = self._fit_size(work_clip.size, (self.width, self.height))
+            clip_left = int((self.width - fit_width) / 2)
+            clip_top = int((self.height - fit_height) / 2)
+            resized_clip = work_clip.resized(new_size=(fit_width, fit_height))
+            positioned_clip = resized_clip.with_position((clip_left, clip_top))
+            canvas_clip = CompositeVideoClip(
+                [positioned_clip],
+                size=(self.width, self.height),
+                bg_color=background_color,
+            ).with_duration(duration)
+            fps = getattr(source_clip, "fps", None) or 24
+            canvas_clip = canvas_clip.with_fps(fps)
+            destination = _make_tmp_path(".mp4")
+            canvas_clip.write_videofile(destination, codec="libx264", audio=True, audio_codec="aac")
+            return StoryBuild(mentions=[], path=destination, paths=[], stickers=[])
+        finally:
+            closed = set()
+            for clip in (canvas_clip, positioned_clip, resized_clip, work_clip, source_clip):
+                if not clip or id(clip) in closed:
+                    continue
+                closed.add(id(clip))
+                with contextlib.suppress(AttributeError):
+                    clip.close()
 
     def photo(
         self,
@@ -264,13 +335,13 @@ class StoryBuilder:
             An object of StoryBuild
         """
 
+        _, ImageClip, _, _, _ = _import_moviepy_for_story()
+        Image = _import_pillow_for_story()
         with Image.open(self.path) as im:
             image_width, image_height = im.size
 
         width_reduction_percent = self.width / float(image_width)
         height_in_ratio = int((float(image_height) * float(width_reduction_percent)))
 
-        clip = ImageClip(str(self.path)).resize(
-            width=self.width, height=height_in_ratio
-        )
+        clip = ImageClip(str(self.path)).resized(width=self.width, height=height_in_ratio)
         return self.build_main(clip, max_duration or 15, font, fontsize, color, link)
