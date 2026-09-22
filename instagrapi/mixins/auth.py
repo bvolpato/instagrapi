@@ -535,13 +535,22 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
             return "sms"
         return "totp"
 
+    def _is_unavailable_caa_login_error(self, exc: ClientError) -> bool:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None) or getattr(exc, "code", None)
+        error_type = str(getattr(exc, "error_type", "") or "").casefold()
+        message = str(getattr(exc, "message", "") or exc).casefold()
+        return status_code == 404 or (error_type == "field_exception" and "payload returned is null" in message)
+
     def _try_caa_login(self, exc: Exception, verification_code: str = "") -> bool:
-        """Try current Android CAA login while preserving the legacy error on failure."""
+        """Try current Android CAA login, propagating actionable login errors."""
         try:
             outcome = self.bloks_caa_login(verification_code=verification_code)
         except (ChallengeError, TwoFactorRequired):
             raise
         except ClientError as caa_exc:
+            if not self._is_unavailable_caa_login_error(caa_exc):
+                raise
             self.logger.warning("CAA login fallback failed: %s", caa_exc)
             return False
         if outcome.get("logged_in"):
@@ -718,6 +727,14 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
         self.private.headers.update({"Authorization": self.authorization})
         return True
 
+    def _caa_result_action_markers(self, outcome: Dict) -> List[str]:
+        """Extract CAA step/action markers from the raw Bloks login payload."""
+        markers: List[str] = []
+        result = outcome.get("result")
+        if isinstance(result, dict):
+            self._bloks_collect_strings(result, markers)
+        return [marker for marker in markers if marker.startswith("CAA_") and ":" in marker]
+
     def login(
         self,
         username: Union[str, None] = None,
@@ -746,8 +763,11 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
         Notes
         -----
         Existing sessions are validated before reuse. Rejected sessions are
-        cleared and refreshed through CAA. CAA errors propagate directly;
-        use ``login_legacy`` to select the legacy accounts login flow.
+        cleared and refreshed through CAA. CAA errors propagate directly.
+        When Instagram's CAA response directs the client back to the legacy
+        accounts flow (``CAA_LOGIN_FALLBACK:...``), this method completes that
+        step through ``login_legacy`` so the typed failure reason surfaces;
+        use ``login_legacy`` to select the legacy flow directly.
         """
         if username and password:
             self.username = username
@@ -795,10 +815,18 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
                     raise exc
                 logged = self._login_with_bloks_two_factor(verification_code, outcome, exc)
             if not logged:
+                markers = self._caa_result_action_markers(outcome)
+                if any(marker.startswith("CAA_LOGIN_FALLBACK:") for marker in markers):
+                    # Instagram routed this login back to the legacy accounts
+                    # flow; that endpoint carries the typed failure reason.
+                    return self.login_legacy(verification_code=verification_code)
+                exc_context = self._exception_context(outcome)
+                if markers:
+                    exc_context["caa_actions"] = markers
                 raise ClientError(
                     str(outcome.get("reason") or "CAA login did not return a session"),
                     response=self.last_response,
-                    **self._exception_context(outcome),
+                    **exc_context,
                 )
 
         self.login_flow()
@@ -1079,8 +1107,15 @@ class LoginMixin(PreLoginFlowMixin, PostLoginFlowMixin):
             "public_transport_impersonate": self.public_transport_impersonate,
             "tls_verify": self.tls_verify,
         }
-        if self.settings.get("fbns_auth"):
-            settings["fbns_auth"] = self.settings["fbns_auth"]
+        fbns_auth = None
+        if getattr(self, "fbns", None) and getattr(self.fbns, "auth", None):
+            fbns_auth = self.fbns.auth.to_settings()
+            if getattr(self, "settings", None) is not None:
+                self.settings["fbns_auth"] = deepcopy(fbns_auth)
+        elif getattr(self, "settings", None) and self.settings.get("fbns_auth") is not None:
+            fbns_auth = deepcopy(self.settings["fbns_auth"])
+        if fbns_auth:
+            settings["fbns_auth"] = fbns_auth
         usdid_settings = self.get_usdid_settings()
         if usdid_settings:
             settings["usdid"] = usdid_settings

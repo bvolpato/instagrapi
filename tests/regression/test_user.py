@@ -246,7 +246,7 @@ class UserMixinRegressionTestCase(unittest.TestCase):
         self.assertEqual(user["username"], "instagram")
         doc_id_request.assert_called_once()
         args, kwargs = doc_id_request.call_args
-        self.assertEqual(args[0], "26762473490008061")
+        self.assertEqual(args[0], "28036671149327607")
         self.assertEqual(args[1]["id"], "25025320")
         self.assertEqual(args[1]["render_surface"], "PROFILE")
         self.assertEqual(kwargs["referer"], "https://www.instagram.com/25025320/")
@@ -700,11 +700,16 @@ class UserMixinRegressionTestCase(unittest.TestCase):
             return [private_user]
 
         with mock.patch.object(client, "user_followers_v1", side_effect=private_lookup) as private_lookup_mock:
-            with mock.patch.object(client, "user_followers_gql", return_value=[public_user]) as public_lookup:
-                followers = client.user_followers("123", use_cache=False, amount=2)
+            with mock.patch.object(client, "user_followers_private_gql", return_value=[public_user]) as private_gql:
+                with mock.patch.object(
+                    client,
+                    "user_followers_gql",
+                    side_effect=AssertionError("limited private list should use private GraphQL, not legacy"),
+                ):
+                    followers = client.user_followers("123", use_cache=False, amount=2)
 
         private_lookup_mock.assert_called_once_with("123", 2)
-        public_lookup.assert_called_once_with("123", 2)
+        private_gql.assert_called_once_with("123", 2)
         self.assertEqual(list(followers), ["public"])
 
     def test_authorized_user_followers_default_amount_falls_back_when_private_list_is_limited(self):
@@ -717,11 +722,16 @@ class UserMixinRegressionTestCase(unittest.TestCase):
             return [private_user]
 
         with mock.patch.object(client, "user_followers_v1", side_effect=private_lookup) as private_lookup_mock:
-            with mock.patch.object(client, "user_followers_gql", return_value=[public_user]) as public_lookup:
-                followers = client.user_followers("123", use_cache=False)
+            with mock.patch.object(client, "user_followers_private_gql", return_value=[public_user]) as private_gql:
+                with mock.patch.object(
+                    client,
+                    "user_followers_gql",
+                    side_effect=AssertionError("limited private list should use private GraphQL, not legacy"),
+                ):
+                    followers = client.user_followers("123", use_cache=False)
 
         private_lookup_mock.assert_called_once_with("123", 0)
-        public_lookup.assert_called_once_with("123", 0)
+        private_gql.assert_called_once_with("123", 0)
         self.assertEqual(list(followers), ["public"])
 
     def test_user_followers_with_order_uses_private_api_without_cache(self):
@@ -771,10 +781,35 @@ class UserMixinRegressionTestCase(unittest.TestCase):
             "user_followers_v1",
             side_effect=ClientError("private lookup failed"),
         ) as private_lookup:
-            with mock.patch.object(client, "user_followers_gql", return_value=[follower]) as public_lookup:
-                followers = client.user_followers("123", use_cache=False, amount=1)
+            with mock.patch.object(client, "user_followers_private_gql", return_value=[follower]) as private_gql:
+                with mock.patch.object(
+                    client,
+                    "user_followers_gql",
+                    side_effect=AssertionError("private GraphQL should answer before legacy lookup"),
+                ):
+                    followers = client.user_followers("123", use_cache=False, amount=1)
 
         private_lookup.assert_called_once_with("123", 1)
+        private_gql.assert_called_once_with("123", 1)
+        self.assertEqual(list(followers), ["456"])
+
+    def test_authorized_user_followers_uses_legacy_public_after_private_gql_fails(self):
+        client = self.build_private_client()
+        follower = UserShort(pk="456", username="follower")
+
+        with mock.patch.object(
+            client,
+            "user_followers_v1",
+            side_effect=ClientError("private lookup failed"),
+        ):
+            with mock.patch.object(
+                client,
+                "user_followers_private_gql",
+                side_effect=ClientError("private graphql lookup failed"),
+            ):
+                with mock.patch.object(client, "user_followers_gql", return_value=[follower]) as public_lookup:
+                    followers = client.user_followers("123", use_cache=False, amount=1)
+
         public_lookup.assert_called_once_with("123", 1)
         self.assertEqual(list(followers), ["456"])
 
@@ -819,10 +854,35 @@ class UserMixinRegressionTestCase(unittest.TestCase):
             "user_following_v1",
             side_effect=ClientError("private lookup failed"),
         ) as private_lookup:
-            with mock.patch.object(client, "user_following_gql", return_value=[following_user]) as public_lookup:
-                following = client.user_following("123", use_cache=False, amount=1)
+            with mock.patch.object(client, "user_following_private_gql", return_value=[following_user]) as private_gql:
+                with mock.patch.object(
+                    client,
+                    "user_following_gql",
+                    side_effect=AssertionError("private GraphQL should answer before legacy lookup"),
+                ):
+                    following = client.user_following("123", use_cache=False, amount=1)
 
         private_lookup.assert_called_once_with("123", 1)
+        private_gql.assert_called_once_with("123", 1)
+        self.assertEqual(list(following), ["456"])
+
+    def test_authorized_user_following_uses_legacy_public_after_private_gql_fails(self):
+        client = self.build_private_client()
+        following_user = UserShort(pk="456", username="following")
+
+        with mock.patch.object(
+            client,
+            "user_following_v1",
+            side_effect=ClientError("private lookup failed"),
+        ):
+            with mock.patch.object(
+                client,
+                "user_following_private_gql",
+                side_effect=ClientError("private graphql lookup failed"),
+            ):
+                with mock.patch.object(client, "user_following_gql", return_value=[following_user]) as public_lookup:
+                    following = client.user_following("123", use_cache=False, amount=1)
+
         public_lookup.assert_called_once_with("123", 1)
         self.assertEqual(list(following), ["456"])
 
@@ -1491,7 +1551,7 @@ class UserMixinRegressionTestCase(unittest.TestCase):
         query.assert_called_once()
         self.assertEqual(query.call_args.kwargs["friendly_name"], "FollowersList")
         self.assertEqual(query.call_args.kwargs["root_field_name"], "xdt_api__v1__friendships__followers")
-        self.assertEqual(query.call_args.kwargs["client_doc_id"], "28479704797510738576165798526")
+        self.assertEqual(query.call_args.kwargs["client_doc_id"], "284797047911918316998205836755")
         self.assertEqual(query.call_args.kwargs["variables"]["user_id"], "123")
         self.assertEqual(query.call_args.kwargs["variables"]["max_id"], 10)
         self.assertEqual(query.call_args.kwargs["variables"]["order"], "date_followed_latest")
@@ -1586,7 +1646,7 @@ class UserMixinRegressionTestCase(unittest.TestCase):
 
         self.assertEqual(query.call_args.kwargs["friendly_name"], "FollowingList")
         self.assertEqual(query.call_args.kwargs["root_field_name"], "xdt_api__v1__friendships__following")
-        self.assertEqual(query.call_args.kwargs["client_doc_id"], "161046392817718486717479294775")
+        self.assertEqual(query.call_args.kwargs["client_doc_id"], "16104639286363954576550227636")
         self.assertEqual(query.call_args.kwargs["variables"]["user_id"], "123")
         self.assertEqual(query.call_args.kwargs["variables"]["order"], "date_followed_earliest")
         self.assertTrue(query.call_args.kwargs["variables"]["skip_use_clickable_see_more"])
