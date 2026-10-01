@@ -2,6 +2,16 @@
 
 Earlier release notes are available in [GitHub Releases](https://github.com/subzeroid/instagrapi/releases).
 
+## 3.0.16 — 2026-09-30
+
+- Fix `highlight_info()` validation when the top-level owner’s `friendship_status` omits `user_id`. Normalize the owner with the existing short-user extractor while preserving relationship values and story order (#2844; fixes #2837).
+- Keep the password-encryption test offline by supplying its public-key response locally (#2843).
+- Update development Ruff to 0.16.9 and CodeQL Action to 4.38.2 (#2838, #2839).
+
+## 3.0.15 — 2026-09-29
+
+- Read nested `server_params` contexts during CAA profile-code verification, avoiding `missing code_entry context_data` for that response shape (#2841). Preserve operand positions and ignore non-literal or unrelated contexts. This does not establish a general fix for `needs_upgrade` or other challenge routes.
+
 ## 3.0.14 — 2026-09-25
 
 - Restore `media_info_gql()` for the optional `public_transport="curl"` path using the current PostRoot document, `fb_dtsg` token, and browser headers (#2835). The default `requests` transport still received HTML for the sampled GraphQL call; private media lookup is unchanged.
