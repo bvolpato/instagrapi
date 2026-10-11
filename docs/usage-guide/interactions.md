@@ -174,7 +174,12 @@ cl.dump_settings("/tmp/dump.json")
 
 ### Manage device, proxy and other account settings
 
-New clients use the Instagram `449.0.0.52.84` app profile from [`config.py`](https://github.com/subzeroid/instagrapi/blob/master/instagrapi/config.py). Saved settings for the previous `448.0.0.0.20` profile retain their version and receive the matching Bloks hash when it is missing. You can also select that profile explicitly with `cl.set_app("448.0.0.0.20")`.
+New clients use the Instagram `449.0.0.52.84` app profile from [`config.py`](https://github.com/subzeroid/instagrapi/blob/master/instagrapi/config.py). Saved settings for the previous `448.0.0.0.20` profile retain their version and receive the matching Bloks hash when it is missing. To select that profile explicitly, update the app settings and rebuild the User-Agent:
+
+```python
+cl.set_app("448.0.0.0.20")
+cl.set_user_agent()
+```
 
 | Method                                   | Return | Description
 |------------------------------------------|------|----------------------------------------------------------------------------
@@ -244,7 +249,7 @@ Transport selection is saved in settings. An explicit saved choice overrides the
 
 The curl private transport requires `curl_cffi>=0.15.0` and libcurl 8.10 or newer. With older libcurl versions, requesting HTTP/2 can still offer both `h2` and `http/1.1` during TLS negotiation. See the [libcurl HTTP version documentation](https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html).
 
-The TLS offer includes the hybrid `X25519MLKEM768` group alongside `X25519`, `P-256` and `P-384` to address connection failures on some proxy paths. Servers without hybrid support can still select a classical group, while ALPN offers only `h2`.
+The private curl transport requires TLS 1.3 or newer and excludes older versions from its ClientHello. HTTPS targets and TLS-intercepting proxies must support TLS 1.3; ordinary CONNECT proxies forward the target TLS handshake unchanged. The TLS offer includes the hybrid `X25519MLKEM768` group alongside `X25519`, `P-256` and `P-384` to address connection failures on some proxy paths. Servers without hybrid support can still select a classical group, while ALPN offers only `h2`.
 
 This transport preserves requests' cookie jar, proxy selection, TLS verification, client certificates and redirects. Responses and iterable request bodies are buffered in memory, including when a response is requested with `stream=True`. Response decompression is handled by requests/urllib3. A numeric timeout is curl's total transfer budget; a `(connect, read)` tuple of numbers supplies a connection budget and a total budget of their sum. Use `timeout=None` for no timeout; tuples containing `None` and `urllib3.util.Timeout` objects are rejected before sending a request.
 
