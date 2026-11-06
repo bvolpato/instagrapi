@@ -2,6 +2,28 @@
 
 Earlier release notes are available in [GitHub Releases](https://github.com/subzeroid/instagrapi/releases).
 
+## 3.2.6 — 2026-11-07
+
+### Fixed
+
+- Keep authenticated collection reads on private/mobile or existing app GraphQL routes; propagate restrictions and request failures instead of silently retrying legacy web queries.
+- Preserve pagination cursor ownership across endpoint failures, and report media fetch errors instead of empty or incomplete success.
+- Keep every response when fetching public stories for more than 50 users, and return an empty result without a request for an empty batch.
+
+## 3.2.5 — 2026-11-06
+
+### Changed
+
+- Use modern profile GraphQL for automatic public user lookups and direct ID lookups, preserving private-first routing and caches. Keep the explicit legacy username helper available.
+- Fetch public media directly with the existing modern GraphQL query instead of first sending the legacy media query.
+
+## 3.2.4 — 2026-11-06
+
+### Fixed
+
+- Keep legacy web-profile lookup headers scoped to that request so later public requests retain their configured session headers.
+- This header-isolation fix does not resolve Instagram legacy profile rate limits; existing modern profile GraphQL methods and query IDs are unchanged.
+
 ## 3.2.3 — 2026-11-05
 
 - Fetch the password encryption key from `launcher/sync/` instead of `qe/sync/`, which now returns 404 without the key headers. Read key headers from error responses before timeout retries or challenge handling, and raise `ClientError` instead of `TypeError` when Instagram omits them (#2920, #2923).
