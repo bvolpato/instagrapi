@@ -2,6 +2,28 @@
 
 Earlier release notes are available in [GitHub Releases](https://github.com/subzeroid/instagrapi/releases).
 
+## 3.2.10 — 2026-11-12
+
+### Added
+
+- Add `comment_likers_v1()` and route `comment_likers()` through the private comment-likers endpoint, returning raw user dictionaries with optional amount truncation (#2944). Explicit GraphQL helpers and cursors remain available.
+
+## 3.2.9 — 2026-11-10
+
+### Fixed
+
+- Replace the rejected legacy `users_stories_gql()` query with modern XDT web GraphQL, cap requests at 25 user IDs per batch, preserve per-user limits, and normalize web story media identifiers without cyclic owner graphs (#2940).
+
+## 3.2.8 — 2026-11-09
+
+### Added
+
+- Add typed `user_stories_web()` results from the modern web stories GraphQL query, including authenticated `fb_dtsg` bootstrap and normalized media, owner, link and location metadata (#2934).
+
+### Fixed
+
+- Inject the saved session into GraphQL requests and clear it during session reset. Existing private/default story routes and explicit raw legacy helpers remain unchanged (#2934).
+
 ## 3.2.7 — 2026-11-07
 
 ### Fixed
