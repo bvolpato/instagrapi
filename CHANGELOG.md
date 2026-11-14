@@ -2,6 +2,12 @@
 
 Earlier release notes are available in [GitHub Releases](https://github.com/subzeroid/instagrapi/releases).
 
+## 3.2.12 — 2026-11-14
+
+### Fixed
+
+- Keep `direct_send()` navigation metadata identical in the request header and body, including text, links and replies. Add an optional request-local `nav_chain` argument and support `send_attribute="inbox"` while preserving existing values and the historical default body chain (related to instagrapi #2870).
+
 ## 3.2.11 — 2026-11-13
 
 ### Fixed
