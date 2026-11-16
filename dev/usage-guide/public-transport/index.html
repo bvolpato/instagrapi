@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -964,6 +964,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#modern-profile-routing-and-remaining-legacy-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modern profile routing and remaining legacy queries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#live-comparison" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1288,6 +1299,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#modern-profile-routing-and-remaining-legacy-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modern profile routing and remaining legacy queries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#live-comparison" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1357,8 +1379,92 @@ use <a href="../interactions/#private-http2-transport">private HTTP/2 transport<
 <span class="n">cl</span> <span class="o">=</span> <span class="n">Client</span><span class="p">(</span><span class="n">public_transport</span><span class="o">=</span><span class="s2">"curl"</span><span class="p">,</span> <span class="n">public_graphql_user_agent</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 <p>For an existing client, <code>cl.set_public_user_agent(web_ua)</code> applies the supplied string to the web session and makes non-LSD GraphQL follow it. Use <code>cl.set_public_user_agent(web_ua, graphql_ua)</code> or the constructor's <code>public_user_agent</code> and <code>public_graphql_user_agent</code> arguments for independent strings. For <code>public_doc_id_graphql_request</code>, a <code>headers={"User-Agent": ...}</code> override takes precedence for its POST, is case-insensitive and does not change the session header. LSD preparation GET requests continue using the web profile, and their POST can be explicitly overridden. Legacy <code>public_request</code> and <code>public_graphql_request</code> retain their existing session-header update behavior.</p>
+<p>The legacy <code>user_info_by_username_gql()</code> helper keeps its endpoint-specific Chrome 122 profile. Its request headers apply only to that call and do not replace the public session headers, including when the request fails.</p>
+<p>Header isolation does not remove Instagram rate limits or restore legacy endpoint availability. Modern profile queries use a separate route and retain their existing query IDs.</p>
 <p>Both settings, including a shared <code>public_graphql_user_agent=None</code>, survive <code>get_settings()</code>/<code>set_settings()</code> and <code>dump_settings()</code>/<code>load_settings()</code> round trips. Saved UA fields take precedence over constructor values. Older settings without UA fields use the selected transport's default, except that an explicit constructor <code>public_user_agent</code> remains in effect. Selecting a public transport through <code>set_retry_config(...)</code> retains its existing behavior of resetting the web UA to that transport's default; apply a custom UA with <code>set_public_user_agent(...)</code> afterward. An independent GraphQL UA remains unchanged, while a shared one follows the new web UA.</p>
 <p>These controls do not change the private Android UA, TLS/browser impersonation, dependencies or retry policy. Changing a UA alone does not reproduce a different transport fingerprint, and arbitrary caller-supplied UA strings are not guaranteed to be accepted by Instagram. This configuration correction does not establish a cause of account restrictions or replace the legacy default strings.</p>
+<h2 id="modern-profile-routing-and-remaining-legacy-queries">Modern profile routing and remaining legacy queries</h2>
+<p>The public branch of <code>user_info()</code> uses the profile <code>doc_id</code> directly. The public branch of
+<code>user_info_by_username()</code> uses modern search to find an exact username match, then fetches
+that ID with the profile query. <code>user_id_from_username()</code> shares that route. Authenticated
+clients retain their private-first order, and existing caches and private fallbacks are preserved.
+<code>user_info_gql(user_id)</code> also uses the modern profile query directly, without an intermediate
+username lookup. These web queries can reuse saved session cookies; modern does not mean
+anonymous or unrestricted access.</p>
+<p><code>user_info_by_username_gql(username)</code> remains the explicit legacy <code>web_profile_info</code> method
+for compatibility. Automatic profile routing does not fall back to it after a modern error.
+The query IDs, transport, User-Agent configuration and retry settings are unchanged.</p>
+<p><code>media_info_gql()</code> now sends the existing modern <code>PolarisPostRootQuery</code> directly, including its token preparation. It accepts the supported GraphQL and REST-shaped media responses; <code>media_info()</code> retains its private-first selection for authenticated clients. Modern media reads can require saved session cookies. Returned location metadata comes from the modern response; call <code>location_complete()</code> when you need additional private location details.</p>
+<p>Authenticated high-level follow-list, story, tagged-media and hashtag reads do not
+fall back to legacy web queries after a private failure. Follow lists and user
+media may restart collection retrieval through their existing private app GraphQL
+alternative when the primary endpoint is unavailable or returns an unsupported
+response. Paginated APIs only select a fallback without an incoming cursor.
+Authorization, throttling, challenge and transport errors propagate to the caller;
+they do not select another endpoint. Programming errors also propagate.</p>
+<p>Pagination cursors belong to the endpoint that returned them. A failed request
+with a nonempty cursor is not replayed against another endpoint. Keep the same
+method and authentication state for subsequent pages; previously saved cursors
+are not translated between public and private APIs. Unified media pagination wraps
+a cursor with its originating route when selecting an alternate endpoint; treat
+returned cursors as opaque strings and pass them back unchanged. Explicit v1 helpers and raw public GraphQL requests keep their endpoint cursor
+format. Media fetch failures now
+raise instead of appearing as an empty or successfully completed partial list.</p>
+<p>Explicit public helpers remain available for callers that deliberately choose
+those contracts. Their presence does not imply that Instagram currently accepts
+them. Batched public story reads preserve every 50-user response, including
+per-user limits; an empty batch returns an empty list without making a request.</p>
+<p>The remaining legacy web operations need their own query shapes and response validation:</p>
+<table>
+<thead>
+<tr>
+<th>Legacy operation</th>
+<th>Existing alternative / migration status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Public user media pagination</td>
+<td>Private app GraphQL is already selected for authenticated clients; the anonymous <code>query_hash</code> fallback remains.</td>
+</tr>
+<tr>
+<td>Followers and following chunks</td>
+<td>Private GraphQL alternatives exist and are already preferred in authenticated high-level lookups. Public pagination is a different query contract.</td>
+</tr>
+<tr>
+<td>Tagged media, including pagination</td>
+<td>No equivalent modern web query is established here; private tagged-media methods remain available.</td>
+</tr>
+<tr>
+<td>Hashtag info and media pagination</td>
+<td>No equivalent modern web query is established here; private hashtag methods remain available.</td>
+</tr>
+<tr>
+<td>Story batches</td>
+<td>Private story methods exist; a modern profile response does not replace the reel response.</td>
+</tr>
+<tr>
+<td>Comment likers</td>
+<td>No equivalent modern web query is established here; comments use a separate query from profile data.</td>
+</tr>
+<tr>
+<td>Related profiles and raw profile-related info</td>
+<td>Separate recommendation queries; a modern profile response does not contain the same data.</td>
+</tr>
+<tr>
+<td>Raw <code>top_search</code></td>
+<td>Its places schema differs from modern user search. <code>location_search_name</code> still uses this route. PK resolution in <code>location_search_pk</code>, <code>location_complete</code> and <code>location_build</code> skips it when matching private info has a positive external ID and nonempty source; incomplete identity still uses legacy name search, including indirect upload/edit location handling. A replacement for name-only search has not been live-validated.</td>
+</tr>
+<tr>
+<td>Raw location feed</td>
+<td>Separate location-media pagination; a profile query is not an alternative.</td>
+</tr>
+</tbody>
+</table>
+<p>The low-level <code>public_graphql_request()</code> keeps its <code>query_hash</code>/<code>query_id</code> interface for explicit
+callers. <code>user_web_profile_info_v1()</code> is a separate private raw-response helper, not the automatic
+public profile route. None of these remaining operations is declared broken merely because it
+uses an older request format, and successful profile reads do not validate their replacements.</p>
 <h2 id="live-comparison">Live Comparison</h2>
 <p>This is a point-in-time live comparison from May 15, 2026. Instagram public web behavior changes frequently, so treat
 these numbers as a practical signal, not a guarantee.</p>
@@ -1477,7 +1583,7 @@ blocked by TLS fingerprint checks.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
