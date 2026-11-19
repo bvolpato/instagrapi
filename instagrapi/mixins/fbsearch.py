@@ -1,3 +1,5 @@
+import json
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 from instagrapi.exceptions import PrivateError
@@ -9,6 +11,15 @@ from instagrapi.extractors import (
     extract_user_short,
 )
 from instagrapi.types import Hashtag, Location, Media, Track, UserShort
+
+
+@dataclass(frozen=True, repr=False)
+class _TopSerpCursor:
+    query: str
+    search_ids: Tuple[str, str, str]
+    after: str
+    seen_media: frozenset[str]
+    seen_cursors: frozenset[str]
 
 
 class FbSearchMixin:
@@ -339,6 +350,168 @@ class FbSearchMixin:
         if reels_max_id:
             params["reels_max_id"] = reels_max_id
         return self.private_request("fbsearch/top_serp/", params=params)
+
+    @staticmethod
+    def _top_serp_media_pk(item: dict) -> str:
+        pk = str(item.get("pk") or item.get("id") or "").partition("_")[0]
+        return pk if pk.isdecimal() else ""
+
+    def media_search_top_gql(self, query: str, amount: int = 0) -> List[Media]:
+        """Return media from the first page of mobile Top search.
+
+        With ``amount=0``, return every media item on that page.
+        """
+        if amount < 0:
+            raise ValueError("amount must be non-negative")
+        connection = self._top_serp_connection(query, self._top_serp_search_ids())
+        return self._extract_top_serp_media(connection, set(), amount)
+
+    def media_search_top_gql_chunk(
+        self, query: str, cursor: Optional[_TopSerpCursor] = None
+    ) -> Tuple[List[Media], Optional[_TopSerpCursor]]:
+        """Return one page of mobile Top search media and the cursor for the next page.
+
+        Pass the returned cursor with the same query and authenticated session until
+        the cursor is ``None``. A page can be empty even when more pages are available.
+        """
+        if cursor is None:
+            search_ids = self._top_serp_search_ids()
+            after = None
+            seen_media: set[str] = set()
+            seen_cursors: frozenset[str] = frozenset()
+        else:
+            if not isinstance(cursor, _TopSerpCursor):
+                raise TypeError("cursor must come from media_search_top_gql_chunk")
+            if cursor.query != query:
+                raise ValueError("cursor belongs to a different search query")
+            search_ids = cursor.search_ids
+            after = cursor.after
+            seen_media = set(cursor.seen_media)
+            seen_cursors = cursor.seen_cursors
+
+        connection = self._top_serp_connection(query, search_ids, after)
+        medias = self._extract_top_serp_media(connection, seen_media)
+        page_info = connection.get("page_info")
+        if not isinstance(page_info, dict) or page_info.get("has_next_page") is not True:
+            return medias, None
+        next_after = page_info.get("end_cursor")
+        if not isinstance(next_after, str) or not next_after or next_after in seen_cursors:
+            return medias, None
+        return medias, _TopSerpCursor(query, search_ids, next_after, frozenset(seen_media), seen_cursors | {next_after})
+
+    def _top_serp_search_ids(self) -> Tuple[str, str, str]:
+        return self.generate_uuid(), self.generate_uuid(), self.generate_uuid()
+
+    def _top_serp_connection(self, query: str, search_ids: Tuple[str, str, str], after: Optional[str] = None) -> dict:
+        search_session_id, serp_session_id, journey_session_id = search_ids
+        variables = {
+            "query": query,
+            "search_session_id": search_session_id,
+            "serp_session_id": serp_session_id,
+            "journey_session_id": journey_session_id,
+            "turn_id": 0,
+            "skip_over_fetched_user_fields": False,
+            "should_include_media_overlay_info_in_lightweight": True,
+            "in_serp_interacted_media_ids": [],
+            "is_pagination_request": after is not None,
+            "should_fetch_timeline_in_skw": False,
+            "serp_origination_context": {
+                "serp_origination": "keyboard",
+                "session_state": "typeahead",
+                "keyword_context": "null",
+                "cdd_ranking_token": None,  # nosec B105 - This protocol field is null.
+            },
+            "is_incremental_delivery_enabled": False,
+            "enable_clips_metadata_in_light_media": False,
+            "include_profile_update_info": True,
+            "search_type": "SEARCH",
+            "remove_view_count_from_lightweight": True,
+            "remove_unused_video_subtitles_status": True,
+            "include_journey_header": False,
+            "is_page_info_fetched_in_separate_chunk": True,
+            "remove_unused_deprecated_owner_counts": True,
+            "exclude_main_user_field": False,
+            "enable_pando_connection": False,
+            "num_media_to_fetch": 10,
+            "remove_unused_video_subtitles_confidence": True,
+            "lightweight_carousel_type": "DELAYED_METADATA",
+            "delay_clips_viewer_fragment": True,
+            "search_surface": "TOP_SERP",
+            "enable_tentpole_story_previews": True,
+            "exclude_pinned_posts": True,
+            "is_discovery_grid_enabled": True,
+            "exclude_caption_user_field": False,
+            "hcm_entrypoint": "IG_SEARCH_TYPEAHEAD_KEYBOARD_SEND",
+            "lightweight_carousel_count": 1,
+            "include_clips_viewer_fragment": True,
+            "remove_unused_carousel_pending_post_count": True,
+            "remove_paid_partnership_and_subtitles_from_lightweight": True,
+            "enable_thumbnails_in_light_media": False,
+            "include_search_engine_attributes": False,
+            "remove_unused_views_on_grid_status": False,
+            "include_search_social_context": False,
+            "enable_serp_clips_viewer_deduplication": True,
+        }
+        if after is not None:
+            variables["after"] = after
+        result = self.private_graphql_request(
+            {
+                "method": "post",
+                "format": "json",
+                "locale": "user",
+                "server_timestamps": "true",
+                "fb_api_req_friendly_name": "TopSerpQuery",
+                "client_doc_id": "418531681916451609839969517761",
+                "variables": json.dumps(variables, separators=(",", ":")),
+            },
+            headers={"X-Root-Field-Name": "xdt_fbsearch__top_serp_graphql"},
+        )
+        data = result.get("data")
+        connection = None
+        if isinstance(data, dict):
+            connection = data.get("manual_pagination_query", data.get("xdt_fbsearch__top_serp_graphql"))
+        if not isinstance(connection, dict) or not isinstance(connection.get("edges"), list):
+            raise PrivateError("Missing TopSerpQuery edges", response=self.last_response)
+        return connection
+
+    def _extract_top_serp_media(self, connection: dict, seen: set[str], amount: int = 0) -> List[Media]:
+        medias: List[Media] = []
+        for edge in connection["edges"]:
+            if not isinstance(edge, dict):
+                continue
+            node = edge.get("node")
+            if not isinstance(node, dict) or node.get("__typename") != "XDTTopSerpMediaGridUnit":
+                continue
+            items = node.get("items")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict) or item.get("__typename") != "XDTMediaDict":
+                    continue
+                media_pk = self._top_serp_media_pk(item)
+                user = item.get("user")
+                if not media_pk or media_pk in seen or not isinstance(user, dict):
+                    continue
+                user_pk = user.get("id") or user.get("pk")
+                if not user_pk:
+                    continue
+                normalized = dict(item, pk=media_pk, id=f"{media_pk}_{user_pk}", user=dict(user, id=user_pk))
+                children = item.get("carousel_media")
+                if isinstance(children, list):
+                    normalized["carousel_media"] = [
+                        dict(child, pk=child_pk)
+                        for child in children
+                        if isinstance(child, dict) and (child_pk := self._top_serp_media_pk(child))
+                    ]
+                try:
+                    medias.append(extract_media_v1(normalized))
+                except (AssertionError, AttributeError, IndexError, KeyError, TypeError, ValueError):
+                    self.logger.warning("Skipping malformed TopSerpQuery media item")
+                    continue
+                seen.add(media_pk)
+                if amount and len(medias) >= amount:
+                    return medias
+        return medias
 
     def media_search(self, query: str, amount: int = 27) -> List[Media]:
         """

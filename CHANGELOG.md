@@ -2,6 +2,32 @@
 
 Earlier release notes are available in [GitHub Releases](https://github.com/subzeroid/instagrapi/releases).
 
+## 3.2.18 — 2026-11-19
+
+### Added
+
+- Continue mobile Top GraphQL media search with `media_search_top_gql_chunk()`. Each call returns one page and a cursor for the next page, with duplicate media filtered across pages (instagrapi #2961).
+
+## 3.2.17 — 2026-11-18
+
+### Added
+
+- Add `media_search_top_gql()` to return typed media from the first page of mobile Top GraphQL search (#2961).
+
+### Fixed
+
+- Assemble batched GraphQL updates and append streamed list items in response order.
+
+## 3.2.16 — 2026-11-17
+
+### Fixed
+
+- Preserve the initial CAA outcome and response when the existing legacy fallback raises a login error. The standalone diagnostic exports a shareable summary of the initial stage; raw exception attributes remain private (instagrapi #2881).
+
+### Changed
+
+- Update the development Ruff pin to 0.17.5 (#2958).
+
 ## 3.2.15 — 2026-11-16
 
 ### Added
