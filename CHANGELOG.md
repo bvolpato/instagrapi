@@ -2,6 +2,12 @@
 
 Earlier release notes are available in [GitHub Releases](https://github.com/subzeroid/instagrapi/releases).
 
+## 3.2.19 — 2026-11-19
+
+### Added
+
+- Search for accounts through the Instagram web search box with `web_search_users()` and get typed `UserShort` results (instagrapi #2962).
+
 ## 3.2.18 — 2026-11-19
 
 ### Added
